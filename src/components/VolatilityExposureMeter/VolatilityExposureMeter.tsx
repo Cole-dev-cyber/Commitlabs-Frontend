@@ -1,12 +1,7 @@
 'use client'
 
-import {
-  EXPOSURE_ZONE_THRESHOLDS,
-  getExposureLevel,
-  type ExposureLevel,
-} from '@/utils/exposure'
-import styles from './VolatilityExposureMeter.module.css'
 import { useReducedMotion } from '@/lib/a11y/useReducedMotion'
+import styles from './VolatilityExposureMeter.module.css'
 
 export interface VolatilityExposureMeterProps {
   /** Current exposure as a percentage (0–100). Clamped when rendering. */
