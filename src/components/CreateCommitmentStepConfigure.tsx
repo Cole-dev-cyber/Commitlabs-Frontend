@@ -161,8 +161,12 @@ export default function CreateCommitmentStepConfigure({
     onChangeMaxLoss(Number(e.target.value))
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && canAdvance) onNext()
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+
+    if (canAdvance) {
+      onNext()
+    }
   }
 
   return (
@@ -188,8 +192,7 @@ export default function CreateCommitmentStepConfigure({
           </p>
         </div>
 
-        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
-        <div className={styles.form} onKeyDown={handleKeyDown} role="group" aria-label="Commitment configuration form">
+        <form className={styles.form} onSubmit={handleSubmit} aria-label="Commitment configuration form" noValidate>
           {/* Commitment Amount */}
           <div className={styles.formGroup}>
             <label htmlFor="amount" className={styles.label}>
@@ -479,9 +482,8 @@ export default function CreateCommitmentStepConfigure({
             Back
           </button>
           <button
-            type="button"
+            type="submit"
             className={styles.continueButton}
-            onClick={onNext}
             disabled={!canAdvance}
             aria-disabled={!canAdvance}
             data-testid="configure-continue"
