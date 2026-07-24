@@ -1,8 +1,10 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import ScrollToTopButton from "@/components/landing-page/ui/ScrollToTop"
+import { SITE_URL } from '@/lib/site'
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: 'CommitLabs - Liquidity as a Commitment',
   description: 'Transform passive liquidity into enforceable, attestable, and composable on-chain commitments',
   keywords: 'liquidity, commitment, blockchain, DeFi, NFT, Stellar, Soroban',
@@ -12,7 +14,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'CommitLabs - Liquidity as a Commitment',
     description: 'Transform passive liquidity into enforceable, attestable, and composable on-chain commitments',
-    url: 'https://commitlabs.com',
+    url: `${SITE_URL}/`,
     siteName: 'CommitLabs',
     images: [
       {
@@ -63,11 +65,11 @@ export default function RootLayout({
               "@type": "WebSite",
               "name": "CommitLabs",
               "description": "Transform passive liquidity into enforceable, attestable, and composable on-chain commitments",
-              "url": "https://commitlabs.com",
+              "url": `${SITE_URL}/`,
               "publisher": {
                 "@type": "Organization",
                 "name": "CommitLabs",
-                "url": "https://commitlabs.com"
+                "url": `${SITE_URL}/`
               }
             })
           }}
