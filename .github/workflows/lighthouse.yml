@@ -23,17 +23,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build Next.js app
-        run: npm run build
+        run: pnpm build
         env:
           NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
           NEXT_PUBLIC_NETWORK_PASSPHRASE: 'Test SDF Network ; September 2015'
@@ -41,11 +45,8 @@ jobs:
           NEXT_PUBLIC_COMMITMENT_CORE_CONTRACT: placeholder
           NEXT_PUBLIC_ATTESTATION_ENGINE_CONTRACT: placeholder
 
-      - name: Install Lighthouse CI
-        run: npm install -g @lhci/cli@0.14.x
-
       - name: Run Lighthouse CI
-        run: lhci autorun
+        run: pnpm dlx @lhci/cli@0.14.x autorun
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
 
