@@ -89,14 +89,15 @@ export const POST = withApiHandler(async (req: NextRequest, { params }, correlat
     txHash: settlementResult.txHash,
   });
 
-  return ok({
+  const responseData = {
     commitmentId: id,
     settlementAmount: settlementResult.settlementAmount,
     finalStatus: settlementResult.finalStatus,
     txHash: settlementResult.txHash,
     reference: settlementResult.reference,
     settledAt: new Date().toISOString(),
-  });
+  };
+  return ok(responseData, undefined, 200, correlationId);
 }, { cors: COMMITMENT_SETTLE_CORS_POLICY });
 
 const _405 = methodNotAllowed(['POST']);
