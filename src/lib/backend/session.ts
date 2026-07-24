@@ -89,6 +89,10 @@ export class MemorySessionBackend implements SessionBackend {
  * `@/lib/backend/kv`. Session records are serialized as JSON; CSRF tokens
  * and session ids remain random hex strings.
  *
+ * The optional `executor` constructor parameter lets tests inject a fake
+ * Upstash command responder without spying on `globalThis.fetch`. Default
+ * is the HTTP REST path documented in `@/lib/backend/kv#UpstashKVStore`.
+ *
  * IMPORTANT — synchronous API contract:
  *   The public `createBrowserSession` / `getSessionRecord` /
  *   `rotateCsrfToken` / `deleteSession` API is synchronous, so this
@@ -103,15 +107,23 @@ export class MemorySessionBackend implements SessionBackend {
  *   For true cross-instance sync semantics, migrate callers to an async
  *   session API — at which point this class can call `await` freely.
  */
+export type UpstashCommandExecutor = (args: unknown[]) => Promise<unknown>;
+
 export class UpstashSessionBackend implements SessionBackend {
-  private readonly url: string;
-  private readonly token: string;
+  private readonly executor: UpstashCommandExecutor;
   private readonly cache = new Map<string, SessionRecord>();
   private readonly prefix = 'cl:session:';
 
-  constructor(url: string, token: string) {
-    this.url = url;
-    this.token = token;
+  constructor(
+    url: string,
+    token: string,
+    executor: UpstashCommandExecutor = defaultUpstashExecutor(url, token),
+  ) {
+    // `url` and `token` are only used to build the default executor. When
+    // an executor is supplied directly, they are intentionally ignored.
+    void url;
+    void token;
+    this.executor = executor;
   }
 
   private key(sessionId: string): string {
@@ -119,21 +131,7 @@ export class UpstashSessionBackend implements SessionBackend {
   }
 
   private async command(args: unknown[]): Promise<unknown> {
-    const response = await fetch(this.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(args),
-    });
-    if (!response.ok) {
-      throw new Error(
-        `UpstashSessionBackend error: ${response.status} ${response.statusText}`,
-      );
-    }
-    const data = (await response.json()) as { result?: unknown };
-    return data.result;
+    return this.executor(args);
   }
 
   get(sessionId: string): SessionRecord | undefined {
@@ -257,6 +255,29 @@ export class UpstashSessionBackend implements SessionBackend {
 
 let warnedAboutInMemoryInProduction = false;
 
+export function defaultUpstashExecutor(
+  url: string,
+  token: string,
+): UpstashCommandExecutor {
+  return async (args: unknown[]): Promise<unknown> => {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `UpstashSessionBackend error: ${response.status} ${response.statusText}`,
+      );
+    }
+    const data = (await response.json()) as { result?: unknown };
+    return data.result;
+  };
+}
+
 function buildDefaultBackend(): SessionBackend {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -333,8 +354,24 @@ export function deleteSession(sessionId: string): void {
   backend.delete(sessionId);
 }
 
-/** Test-only: reset the in-memory store between Vitest cases. */
+/**
+ * Test-only: reset the in-memory store between Vitest cases.
+ *
+ * Limited to the in-memory backend on purpose: if a test injects a
+ * persistent backend (e.g. `UpstashSessionBackend`) and then calls this
+ * helper, the async `clearAll()` fanout would hit the network and could
+ * produce unhandledrejection events after the test has torn down.
+ * Tests that exercise persistent backends should reset their own state
+ * explicitly via the injected backend's methods.
+ */
 export function __resetSessionStoreForTests(): void {
+  if (!(backend instanceof MemorySessionBackend)) {
+    throw new TypeError(
+      '__resetSessionStoreForTests requires the in-memory ' +
+        'MemorySessionBackend to be the active backend; reset the ' +
+        'persistent backend explicitly in your test.',
+    );
+  }
   backend.clear();
 }
 

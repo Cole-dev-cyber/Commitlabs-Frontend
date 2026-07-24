@@ -11,7 +11,9 @@ import {
   setSessionBackend,
   SESSION_COOKIE_NAME,
   MemorySessionBackend,
+  UpstashSessionBackend,
   type SessionBackend,
+  type UpstashCommandExecutor,
 } from './session';
 
 describe('session store — default in-memory backend', () => {
@@ -113,5 +115,120 @@ describe('session store — pluggable backend injection (issue #1288 acceptance)
     expect(() =>
       setSessionBackend(undefined as unknown as SessionBackend),
     ).toThrow(/SessionBackend/);
+  });
+});
+
+describe('UpstashSessionBackend — clearAll() cursor loop (issue #1288 acceptance)', () => {
+  /**
+   * Helper: synthesise a fake Upstash executor that walks through a
+   * pre-scripted transcript of SCAN replies. Tracks every command so we
+   * can assert DEL was issued for every batch.
+   */
+  function scriptedExecutor(
+    scanReplies: Array<[string, string[]]>,
+  ): {
+    executor: UpstashCommandExecutor;
+    calls: unknown[][];
+  } {
+    const calls: unknown[][] = [];
+    let scanIndex = 0;
+    const executor: UpstashCommandExecutor = async (args) => {
+      calls.push(args);
+      const command = Array.isArray(args) ? args[0] : undefined;
+      if (command === 'SCAN') {
+        const reply = scanReplies[scanIndex];
+        if (!reply) throw new Error('simulated network failure');
+        scanIndex += 1;
+        return [reply[0], reply[1]];
+      }
+      if (command === 'GET') return null;
+      if (command === 'DEL') return String(args.slice(1).length);
+      if (command === 'SET') return 'OK';
+      return null;
+    };
+    return { executor, calls };
+  }
+
+  it('terminates the SCAN cursor loop and DELs every batch', async () => {
+    const { executor, calls } = scriptedExecutor([
+      ['42', ['cl:session:a', 'cl:session:b']],
+      ['17', ['cl:session:c']],
+      ['0', []],
+    ]);
+
+    const backend = new UpstashSessionBackend(
+      'https://example.invalid',
+      'token',
+      executor,
+    );
+
+    const result = await backend.clearAll();
+    expect(result).toEqual({ scanned: 3, deleted: 3, errors: 0 });
+
+    // Cursor was issued three times. Each DEL receives exactly the number
+    // of keys that its source SCAN batch contained.
+    const scanCalls = calls.filter((c) => c[0] === 'SCAN');
+    const delBatchSizes = calls
+      .filter((c) => c[0] === 'DEL')
+      .map((c) => c.length - 1);
+
+    expect(scanCalls).toHaveLength(3);
+    expect(delBatchSizes).toEqual([2, 1]);
+  });
+
+  it('terminates after a SCAN failure and reports the error', async () => {
+    // First SCAN returns a non-zero cursor so the loop continues; second
+    // hit exhausts the transcript and triggers the simulated failure.
+    const { executor, calls } = scriptedExecutor([
+      ['7', ['cl:session:a', 'cl:session:b']],
+    ]);
+
+    const backend = new UpstashSessionBackend(
+      'https://example.invalid',
+      'token',
+      executor,
+    );
+
+    const result = await backend.clearAll();
+    expect(result.errors).toBe(1);
+    expect(result.deleted).toBe(2);
+    // First SCAN issued, batch deleted, second SCAN attempted then failed.
+    const scanCalls = calls.filter((c) => c[0] === 'SCAN');
+    expect(scanCalls.length).toBe(2);
+  });
+
+  it('exits prematurely if Upstash returns an unparsable shape', async () => {
+    const executor: UpstashCommandExecutor = async () => 'not-an-array';
+    const backend = new UpstashSessionBackend(
+      'https://example.invalid',
+      'token',
+      executor,
+    );
+
+    const result = await backend.clearAll();
+    expect(result).toEqual({ scanned: 0, deleted: 0, errors: 0 });
+  });
+});
+
+describe('__resetSessionStoreForTests — in-memory guard', () => {
+  let originalBackend: SessionBackend;
+
+  beforeEach(() => {
+    originalBackend = getSessionBackend();
+  });
+
+  afterEach(() => {
+    setSessionBackend(originalBackend);
+  });
+
+  it('throws when the active backend is not the in-memory backend', () => {
+    setSessionBackend(
+      new UpstashSessionBackend(
+        'https://example.invalid',
+        'token',
+        async () => null,
+      ),
+    );
+    expect(__resetSessionStoreForTests).toThrow(/MemorySessionBackend/);
   });
 });
