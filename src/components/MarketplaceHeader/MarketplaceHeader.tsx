@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import React, {
   useCallback,
@@ -13,7 +13,6 @@ import { AlertCircle, ArrowLeft, Loader2, Search } from 'lucide-react'
 import styles from './MarketplaceHeader.module.css';
 import { apiRequest } from '@/lib/client/apiClient';
 import { useApi } from '@/hooks/useApi';
-import { apiGet, apiFetch } from '@/lib/apiClient';
 import { MarketStatsBanner } from './MarketStatsBanner';
 
 // ---------------------------------------------------------------------------
@@ -130,19 +129,20 @@ export function MarketplaceHeader({
       })
 
       apiRequest<{ data?: CommitmentSearchResult[] }>(`/api/commitments/search?${params}`, { signal: controller.signal })
-          .then((data) => {
-            setResults(data.data ?? []);
-            setIsDropdownOpen(true);
-            setActiveIndex(-1);
+        .then((data) => {
+          setResults(data.data ?? []);
+          setIsDropdownOpen(true);
+          setActiveIndex(-1);
+          setIsSearching(false);
+        })
+        .catch((err: unknown) => {
+          const e = err as { name?: string; message?: string }
+          if (e.name !== 'AbortError') {
+            setSearchError(e.message || String(err));
+            setIsDropdownOpen(false);
             setIsSearching(false);
-          })
-          .catch((err: any) => {
-            if (err.name !== 'AbortError') {
-              setSearchError(err.message || String(err));
-              setIsDropdownOpen(false);
-              setIsSearching(false);
-            }
-          })
+          }
+        })
 
       onSearchChange?.(trimmed)
     }, searchDebounceMs)
