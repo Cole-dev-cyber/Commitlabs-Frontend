@@ -2,6 +2,7 @@
 
 import { useId } from 'react'
 import styles from './VolatilityExposureMeter.module.css'
+import { useReducedMotion } from '@/lib/a11y/useReducedMotion'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -95,7 +96,8 @@ export interface VolatilityExposureMeterProps {
 // ── Component ───────────────────────────────────────────────────────────────
 
 export default function VolatilityExposureMeter({
-  valuePercent,
+  valuePercent = 0,
+  insufficientData = false,
   description,
   riskProfileId,
 }: VolatilityExposureMeterProps) {
@@ -138,7 +140,7 @@ export default function VolatilityExposureMeter({
       <div
         className={styles.meterContainer}
         role="meter"
-        aria-valuenow={percent}
+        aria-valuenow={insufficientData ? undefined : percent}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={`Volatility exposure: ${percent}%, ${zone.label.toLowerCase()} range.`}

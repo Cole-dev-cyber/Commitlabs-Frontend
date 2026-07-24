@@ -167,45 +167,6 @@ function getNetworkPassphrase(): string {
   return getBackendConfig().networkPassphrase;
 }
 
-function getRpcTimeoutMs(): number {
-  const raw = Number(process.env.SOROBAN_RPC_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 15_000;
-}
-
-async function withRpcTimeout<T>(
-  promise: Promise<T>,
-  methodName: string,
-): Promise<T> {
-  const timeoutMs = getRpcTimeoutMs();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(
-            new BackendError({
-              code: "GATEWAY_TIMEOUT",
-              message:
-                "The blockchain operation timed out. It may still be processed later.",
-              status: 504,
-              details: {
-                methodName,
-                timeoutMs,
-                retryable: true,
-              },
-            }),
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
 
 function getContractId(kind: "commitmentCore" | "attestationEngine"): string {
   const config = getBackendConfig();
@@ -232,44 +193,6 @@ function getSourcePublicKey(): string | null {
   return process.env.SOROBAN_SOURCE_ACCOUNT || null;
 }
 
-function getRpcTimeoutMs(): number {
-  const raw = Number(process.env.SOROBAN_RPC_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : 15_000;
-}
-
-async function withRpcTimeout<T>(
-  operation: Promise<T>,
-  methodName: string,
-  timeoutMs = getRpcTimeoutMs(),
-): Promise<T> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<T>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          reject(
-            new BackendError({
-              code: "GATEWAY_TIMEOUT",
-              message: "The blockchain operation timed out. It may still be processed later.",
-              status: 504,
-              details: {
-                methodName,
-                timeoutMs,
-                retryable: true,
-              },
-            }),
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
-}
 
 function getSorobanServer(): SorobanRpc.Server {
   const url = getRpcUrl();
@@ -325,252 +248,6 @@ function normalizeStatus(value: unknown): ChainCommitmentStatus {
  * Maps RPC failures, simulation errors, and timeouts to appropriate status codes.
  * Ensures that sensitive raw RPC details are not leaked to the client.
  */
-function normalizeContractError(
-  error: unknown,
-  defaults: {
-    code: BackendErrorCode;
-    message: string;
-    status: number;
-    details?: Record<string, unknown>;
-  },
-): BackendError {
-  // If it's already a well-formed BackendError, we enrich it with defaults
-  if (error instanceof BackendError) {
-    const isRetryable = [429, 503, 504].includes(error.status);
-    return new BackendError({
-      code: error.code,
-      message: error.message,
-      status: error.status,
-      details: {
-        ...asRecord(error.details),
-        ...asRecord(defaults.details),
-        retryable: isRetryable || asRecord(error.details).retryable === true,
-      },
-    });
-  }
-
-  const errMessage = error instanceof Error ? error.message : String(error);
-  const errStr = errMessage.toLowerCase();
-
-  let status = defaults.status;
-  let code = defaults.code;
-  let message = defaults.message;
-  let retryable = false;
-
-  // Pattern match for specific failure types from Soroban RPC or SDK
-  if (
-    errStr.includes("timeout") ||
-    errStr.includes("deadline") ||
-    errStr.includes("timed out")
-  ) {
-    status = 504;
-    code = "GATEWAY_TIMEOUT";
-    message =
-      "The blockchain operation timed out. It may still be processed later.";
-    retryable = true;
-  } else if (
-    errStr.includes("429") ||
-    errStr.includes("rate limit") ||
-    errStr.includes("too many requests")
-  ) {
-    status = 429;
-    code = "TOO_MANY_REQUESTS";
-    message =
-      "Rate limit exceeded for blockchain calls. Please try again later.";
-    retryable = true;
-  } else if (errStr.includes("not found") || errStr.includes("404")) {
-    status = 404;
-    code = "NOT_FOUND";
-    message = "The requested resource was not found on the blockchain.";
-  } else if (
-    errStr.includes("insufficient") ||
-    errStr.includes("invalid") ||
-    errStr.includes("malformed")
-  ) {
-    status = 400;
-    code = "VALIDATION_ERROR";
-    message =
-      "The transaction was rejected due to invalid parameters or state.";
-  } else if (status >= 500) {
-    retryable = true;
-  }
-
-  return new BackendError({
-    code,
-    message,
-    status,
-    details: {
-      ...asRecord(defaults.details),
-      retryable,
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Retry-with-backoff for read-mode Soroban calls
-//
-// Transient RPC failures (429 / 503 / 504 / timeouts) on *read* calls are safe
-// to retry because reads are idempotent — re-running one cannot change on-chain
-// state. Write transactions are NEVER retried here: re-submitting a signed
-// transaction risks double execution. The retry path is therefore exposed only
-// through `invokeReadContractMethod`, whose call mode is hard-coded to "read".
-//
-// Both the attempt count and the cumulative backoff are bounded so that a flaky
-// endpoint cannot stall a request indefinitely.
-// ---------------------------------------------------------------------------
-
-/** Async sleep helper. Injectable so unit tests run without real timers. */
-export type SleepFn = (ms: number) => Promise<void>;
-
-const defaultSleep: SleepFn = (ms) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-/** Tunables for {@link retryWithBackoff}. */
-export interface RetryOptions {
-  /** Total attempts, including the first. Coerced to at least 1. */
-  maxAttempts: number;
-  /** Delay used to seed the first backoff, in milliseconds. */
-  baseDelayMs: number;
-  /** Hard ceiling for any single backoff delay, in milliseconds. */
-  maxDelayMs: number;
-  /** Hard ceiling for the sum of all backoff delays in a single call. */
-  maxTotalBackoffMs: number;
-  /** Growth factor applied to the delay ceiling after each failed attempt. */
-  backoffMultiplier: number;
-  /** Returns true when an error is a transient failure worth retrying. */
-  isRetryable: (error: unknown) => boolean;
-  /** Random source in [0, 1) used for jitter. Injectable for tests. */
-  random?: () => number;
-  /** Sleep implementation. Injectable for tests. */
-  sleep?: SleepFn;
-  /** Observability hook fired immediately before each backoff sleep. */
-  onRetry?: (info: {
-    attempt: number;
-    delayMs: number;
-    error: unknown;
-  }) => void;
-}
-
-/**
- * Runs `operation` and retries it with bounded exponential backoff for as long
- * as it keeps failing with a *retryable* error.
- *
- * Guarantees:
- * - Bounded work: at most `maxAttempts` invocations and at most
- *   `maxTotalBackoffMs` of cumulative sleeping, so a failing dependency can
- *   never stall the caller indefinitely.
- * - Non-retryable errors are re-thrown on first occurrence, untouched.
- * - The error from the final attempt is re-thrown unchanged, so the caller's
- *   existing error handling (normalization, failure metrics) is unaffected.
- * - No side effects of its own: it does not log or emit metrics. The caller
- *   decides what happens once retries are exhausted.
- *
- * Backoff uses "equal jitter" (half fixed, half random) so that many concurrent
- * callers — e.g. parallel per-commitment reads — do not retry in lock-step and
- * stampede the RPC endpoint.
- */
-export async function retryWithBackoff<T>(
-  operation: (attempt: number) => Promise<T>,
-  options: RetryOptions,
-): Promise<T> {
-  const random = options.random ?? Math.random;
-  const sleep = options.sleep ?? defaultSleep;
-  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts));
-
-  let totalBackoffMs = 0;
-
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      // The operation receives the 1-based attempt number so lower layers can
-      // enforce per-attempt invariants (see assertRetrySafe).
-      return await operation(attempt);
-    } catch (error) {
-      const isLastAttempt = attempt >= maxAttempts;
-      if (isLastAttempt || !options.isRetryable(error)) {
-        throw error;
-      }
-
-      // Exponential growth, capped per attempt, then jittered.
-      const ceiling = Math.min(
-        options.baseDelayMs * options.backoffMultiplier ** (attempt - 1),
-        options.maxDelayMs,
-      );
-      const delayMs = ceiling / 2 + random() * (ceiling / 2);
-
-      // Honour the cumulative backoff budget: rather than stalling, stop and
-      // surface the error if the next sleep would exceed it.
-      if (totalBackoffMs + delayMs > options.maxTotalBackoffMs) {
-        throw error;
-      }
-      totalBackoffMs += delayMs;
-
-      options.onRetry?.({ attempt, delayMs, error });
-      await sleep(delayMs);
-    }
-  }
-}
-
-/**
- * Bounded retry policy applied to read-mode Soroban calls only. Worst-case
- * added latency is roughly `maxTotalBackoffMs` on top of the time spent in the
- * failed attempts themselves. These values are intentionally conservative:
- * they absorb brief RPC hiccups, not sustained outages.
- */
-const READ_RETRY_CONFIG = {
-  maxAttempts: 3,
-  baseDelayMs: 200,
-  maxDelayMs: 2_000,
-  maxTotalBackoffMs: 4_000,
-  backoffMultiplier: 2,
-} as const;
-
-/**
- * Decides whether a failed Soroban call is a *transient* failure worth
- * retrying. It reuses the retryable classification produced by
- * {@link normalizeContractError} (429 / 503 / 504 / timeouts and generic
- * gateway errors), so there is a single source of truth. Deterministic
- * failures — 404 (not found) and 400 (validation) — are never retried.
- */
-export function isRetryableContractError(error: unknown): boolean {
-  if (error instanceof BackendError && error.code === "GATEWAY_TIMEOUT") {
-    return false;
-  }
-
-  const normalized = normalizeContractError(error, {
-    code: "BLOCKCHAIN_CALL_FAILED",
-    message: "Soroban read call failed.",
-    status: 502,
-    details: {},
-  });
-  return asRecord(normalized.details).retryable === true;
-}
-
-/**
- * Guard against retrying write transactions.
- *
- * Read calls are idempotent and may safely run multiple times. A write
- * transaction must be submitted exactly once: retrying it (attempt > 1) risks
- * a double submission. This invariant is enforced at the lowest level — inside
- * {@link invokeContractMethod} — so it holds regardless of how a call is wired
- * up. If the invariant is ever violated by a future change, this throws a
- * non-retryable error *before* any transaction is submitted, converting a
- * silent double-spend into a loud, safe failure.
- *
- * Exported so the guard can be unit tested directly.
- */
-export function assertRetrySafe(mode: ContractCallMode, attempt: number): void {
-  if (attempt > 1 && mode !== "read") {
-    throw new BackendError({
-      code: "BLOCKCHAIN_CALL_FAILED",
-      message: "Internal error: write transactions must never be retried.",
-      status: 500,
-      details: { mode, attempt },
-    });
-  }
-}
-
 function parseChainCommitment(value: unknown): ChainCommitment {
   const raw = asRecord(value);
   const id = asString(raw.id ?? raw.commitmentId);
@@ -728,7 +405,7 @@ async function waitForTransactionResult(
       return tx.returnValue ? scValToNative(tx.returnValue) : null;
     }
     if (tx.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-      throw normalizeContractError(new Error("Transaction execution failed"), {
+      throw normalizeBackendError(new Error("Transaction execution failed"), {
         code: "BLOCKCHAIN_CALL_FAILED",
         message: "Soroban transaction failed.",
         status: 502,
@@ -741,7 +418,7 @@ async function waitForTransactionResult(
     });
   }
 
-  throw normalizeContractError(new Error("RPC Timeout"), {
+  throw normalizeBackendError(new Error("RPC Timeout"), {
     code: "BLOCKCHAIN_CALL_FAILED",
     message: "Timed out waiting for Soroban transaction result.",
     status: 504,
@@ -808,7 +485,7 @@ async function invokeContractMethod(
     `${methodName}.simulateTransaction`,
   );
   if (SorobanRpc.Api.isSimulationError(simulation)) {
-    throw normalizeContractError(new Error(simulation.error), {
+    throw normalizeBackendError(new Error(simulation.error), {
       code: "BLOCKCHAIN_CALL_FAILED",
       message: `Soroban simulation failed for ${methodName}.`,
       status: 502,
@@ -1064,7 +741,7 @@ export async function getUserCommitmentsFromChain(
     const countersAdapter = getCountersAdapter();
     void countersAdapter.incrementChainFailures();
 
-    throw normalizeContractError(error, {
+    throw normalizeBackendError(error, {
       code: "BLOCKCHAIN_CALL_FAILED",
       message: "Unable to fetch user commitments from chain.",
       status: 502,
@@ -1199,6 +876,9 @@ export async function settleCommitmentOnChain(
       ],
       "write",
     );
+    // This method is intentionally aligned with the escrow contract alias in
+    // contracts/escrow/src/lib.rs so the backend can invoke settled releases
+    // using the expected ABI shape.
 
     // Increment successful actions counter on successful settlement
     const countersAdapter = getCountersAdapter();
@@ -1227,7 +907,7 @@ export async function settleCommitmentOnChain(
     const countersAdapter = getCountersAdapter();
     void countersAdapter.incrementChainFailures(); // Fire and forget for metrics
 
-    throw normalizeContractError(error, {
+    throw normalizeBackendError(error, {
       code: "BLOCKCHAIN_CALL_FAILED",
       message: "Unable to settle commitment on chain.",
       status: 502,

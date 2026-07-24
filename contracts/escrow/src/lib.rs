@@ -25,22 +25,25 @@ use soroban_sdk::{
 // Configuration constants for escrow contract
 // Configuration constants for escrow contract
 // Number of seconds in a day used for maturity calculation.
-const SECONDS_PER_DAY: u64 = 86_400;
+pub const SECONDS_PER_DAY: u64 = 86_400;
 
 /// Upper bound for commitment amount enforced by `create_commitment`.
 /// Aligns with backend `CommitmentLimits.max_amount`.
-const MAX_AMOUNT: i128 = 1_000_000_000_000;
+pub const MAX_AMOUNT: i128 = 1_000_000_000_000;
 
 /// Upper bound for commitment duration (in days) enforced by `create_commitment`.
 /// Aligns with backend `CommitmentLimits.max_duration_days`.
-const MAX_DURATION_DAYS: u32 = 365;
+pub const MAX_DURATION_DAYS: u32 = 365;
 
 /// Upper bound for penalty basis points (10_000 = 100%).
-const MAX_PENALTY_BPS: u32 = 10_000;
+pub const MAX_PENALTY_BPS: u32 = 10_000;
 
 /// Bound full-record owner reads so a single query does not exceed Soroban
 /// simulation/result size limits.
 const MAX_USER_COMMITMENTS_READ: u32 = 100;
+
+/// Maximum number of owner commitment ids returned by a single paginated read.
+const MAX_OWNER_COMMITMENTS_PAGE_LIMIT: u32 = 100;
 
 /// Storage keys for persistent contract state.
 #[contracttype]
@@ -58,6 +61,12 @@ pub enum DataKey {
     OwnerIndex(Address),
     /// Protocol fee recipient.
     FeeRecipient,
+    /// Yield pool balance used to pay matured release yield.
+    YieldPool,
+    /// Contract pause flag to halt write operations.
+    Paused,
+    /// Attestation history for a commitment.
+    Attestations(u64),
     /// Dispute record for a commitment, keyed by commitment id.
     Dispute(u64),
     /// Default penalty in basis points for each RiskProfile.
@@ -181,18 +190,10 @@ pub enum Error {
     NotMatured = 7,
     InvalidDuration = 8,
     PenaltyTooHigh = 9,
+    /// Insufficient funds in the yield pool to satisfy a matured release.
+    InsufficientYieldPool = 10,
     /// Contract is currently paused for emergency halt.
-    Paused = 10,
-    /// Token asset does not match the configured escrow token.
-    AssetMismatch = 11,
-    /// Yield pool has insufficient balance to pay matured commitment yield.
-    InsufficientYieldPool = 12,
-    /// WASM hash provided for upgrade is invalid (e.g. zero hash).
-    InvalidWasmHash = 13,
-    /// Commitment is in Violated status; release and refund are blocked until resolved.
-    CommitmentViolated = 14,
-    /// Escrow owner balance is too low for the requested transfer.
-    InsufficientBalance = 15,
+    Paused = 11,
 }
 
 /// Result of an early exit commitment.
@@ -205,14 +206,33 @@ pub struct EarlyExitResult {
     pub finalStatus: EscrowStatus,
 }
 
+/// Result of a matured settlement invoked by `settle_commitment`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CreateCommitmentEventData {
-    pub asset: Address,
-    pub amount: i128,
-    pub risk: RiskProfile,
-    pub maturity: u64,
-    pub penalty_bps: u32,
+#[allow(non_snake_case)]
+pub struct SettlementResult {
+    pub settlementAmount: i128,
+    pub finalStatus: String,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct AttestationRecord {
+    pub attestor: Address,
+    pub compliance_score: u32,
+    pub timestamp: u64,
+}
+
+const MAX_PENALTY_BPS: u32 = 10_000;
+const SECONDS_PER_DAY: u64 = 86_400;
+const YIELD_BPS_DENOMINATOR: i128 = 3_650_000; // 365 days * 10_000 bps
+
+fn yield_rate_bps(risk: RiskProfile) -> u32 {
+    match risk {
+        RiskProfile::Safe => 500,
+        RiskProfile::Balanced => 700,
+        RiskProfile::Aggressive => 1_000,
+    }
 }
 
 #[contracttype]
@@ -448,7 +468,7 @@ impl EscrowContract {
             owner: owner.clone(),
             asset,
             amount,
-            accrued_yield: 0,
+            accrued_yield: calculate_accrued_yield(amount, duration_days, risk),
             risk,
             status: EscrowStatus::Created,
             maturity,
@@ -477,7 +497,7 @@ impl EscrowContract {
     ///
     /// `duration_days` is converted to an absolute maturity timestamp using the
     /// current ledger time.
-    pub fn create_default_commitment(
+    pub fn create_commitment_default(
         env: Env,
         owner: Address,
         asset: Address,
@@ -486,6 +506,7 @@ impl EscrowContract {
         duration_days: u32,
     ) -> Result<u64, Error> {
         Self::require_init(&env)?;
+        Self::require_not_paused(&env)?;
         owner.require_auth();
 
         if amount <= 0 {
@@ -500,7 +521,10 @@ impl EscrowContract {
 
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
-        let maturity = now + (duration_days as u64) * SECONDS_PER_DAY;
+        let duration_seconds = (duration_days as u64)
+            .checked_mul(SECONDS_PER_DAY)
+            .ok_or(Error::InvalidDuration)?;
+        let maturity = now.checked_add(duration_seconds).ok_or(Error::InvalidDuration)?;
 
         let accrued_yield = Self::calculate_accrued_yield(amount, duration_days, risk);
         let commitment = Commitment {
@@ -721,30 +745,9 @@ impl EscrowContract {
         Self::yield_pool_balance(&env)
     }
 
-    /// Release the escrowed funds back to the owner once the commitment has
-    /// matured.
-    ///
-    /// # Authorization
-    /// Permissionless; any caller may invoke post-maturity. Funds always transfer to the stored owner.
-    ///
-    /// # State Transition
-    /// Requires: `EscrowStatus::Funded` (not `Violated`)
-    /// Transitions to: `EscrowStatus::Released`
-    ///
-    /// # Errors
-    /// - `NotInitialized` — contract not initialized
-    /// - `CommitmentViolated` — commitment in violated state
-    /// - `InvalidState` — commitment not in `Funded` state
-    /// - `NotMatured` — ledger time < maturity timestamp
-    /// - `InsufficientYieldPool` — yield pool cannot cover accrued yield
-    ///
-    /// # Authorization Rationale
-    /// Post-maturity this call is permissionless to avoid liveness issues where the owner
-    /// cannot trigger release (e.g., lost key). The transfer ALWAYS targets the stored
-    /// `owner` recorded on the `Commitment`, preventing fund diversion.
-    pub fn release(env: Env, commitment_id: u64) -> Result<i128, Error> {
-        Self::require_init(&env)?;
-        let mut c = Self::load(&env, commitment_id)?;
+    fn perform_release(env: &Env, commitment_id: u64, caller: &Address) -> Result<i128, Error> {
+        caller.require_auth();
+        let mut c = Self::load(env, commitment_id)?;
 
         if c.status == EscrowStatus::Violated {
             return Err(Error::CommitmentViolated);
@@ -759,17 +762,19 @@ impl EscrowContract {
             return Err(Error::NotMatured);
         }
 
-        let yield_pool = Self::yield_pool_balance(&env);
+        let yield_pool = Self::yield_pool_balance(env);
         if yield_pool < c.accrued_yield {
             return Err(Error::InsufficientYieldPool);
         }
 
         let total_payout = c.amount + c.accrued_yield;
-        
-        // Effects: Update state before interactions to prevent reentrancy
-        Self::set_yield_pool_balance(&env, yield_pool - c.accrued_yield);
+        let token = Self::token_client(env);
+        let contract = env.current_contract_address();
+        token.transfer(&contract, &c.owner, &total_payout);
+
+        Self::set_yield_pool_balance(env, yield_pool - c.accrued_yield);
         c.status = EscrowStatus::Released;
-        Self::save(&env, &c);
+        Self::save(env, &c);
 
         // Interactions: External token transfer
         let token = Self::token_client(&env);
@@ -777,10 +782,33 @@ impl EscrowContract {
         token.transfer(&contract, &c.owner, &total_payout);
 
         env.events().publish(
-            (Symbol::new(&env, "release"), c.owner.clone()),
+            (Symbol::new(env, "release"), c.owner.clone()),
             (commitment_id, total_payout, c.accrued_yield),
         );
         Ok(total_payout)
+    }
+
+    /// Release the escrowed funds back to the owner once the commitment has
+    /// matured. Only callable on a `Funded` commitment at/after maturity.
+    pub fn release(env: Env, commitment_id: u64, caller: Address) -> Result<i128, Error> {
+        Self::require_init(&env)?;
+        Self::perform_release(&env, commitment_id, &caller)
+    }
+
+    /// Alias matching the backend settlement method name.
+    /// Delegates to matured release logic and returns a structured settlement
+    /// result the backend can parse.
+    pub fn settle_commitment(
+        env: Env,
+        commitment_id: u64,
+        caller: Address,
+    ) -> Result<SettlementResult, Error> {
+        Self::require_init(&env)?;
+        let payout = Self::perform_release(&env, commitment_id, &caller)?;
+        Ok(SettlementResult {
+            settlementAmount: payout,
+            finalStatus: String::from_str(&env, "SETTLED"),
+        })
     }
 
     /// Early-exit refund. Returns the principal minus the early-exit penalty;
@@ -1333,21 +1361,41 @@ impl EscrowContract {
         commitments
     }
 
-    /// Return the list of commitment ids owned by an address using the backend's
-    /// fallback reader name.
+    /// Return the first bounded page of commitment ids owned by an address using
+    /// the backend's fallback reader name.
     pub fn get_user_commitment_ids(env: Env, owner: Address) -> Vec<u64> {
-        Self::owner_commitment_ids(&env, owner)
+        Self::owner_commitment_ids_page(&env, owner, 0, MAX_OWNER_COMMITMENTS_PAGE_LIMIT)
     }
 
-    /// Return the list of commitment ids owned by an address.
+    /// Return a paginated list of commitment ids owned by an address using the
+    /// backend's fallback reader name.
+    pub fn get_user_commitment_ids_page(
+        env: Env,
+        owner: Address,
+        start: u32,
+        limit: u32,
+    ) -> Vec<u64> {
+        Self::owner_commitment_ids_page(&env, owner, start, limit)
+    }
+
+    /// Return a bounded page of commitment ids owned by an address.
+    ///
+    /// `start` is a zero-based offset into the owner's commitment id index.
+    /// `limit` is clamped to `MAX_OWNER_COMMITMENTS_PAGE_LIMIT` so callers
+    /// cannot request an unbounded payload.
     ///
     /// # Authorization
     /// None; read-only operation
     ///
     /// # Returns
-    /// A vector of commitment ids owned by the address
-    pub fn get_owner_commitments(env: Env, owner: Address) -> Vec<u64> {
-        Self::owner_commitment_ids(&env, owner)
+    /// A vector of commitment ids owned by the address for the requested page
+    pub fn get_owner_commitments(
+        env: Env,
+        owner: Address,
+        start: u32,
+        limit: u32,
+    ) -> Vec<u64> {
+        Self::owner_commitment_ids_page(&env, owner, start, limit)
     }
 
     /// Retrieve the dispute record for a commitment. Returns `None` if no
@@ -1366,7 +1414,7 @@ impl EscrowContract {
 
     /// Retrieve the default penalty (in basis points) for a specific risk profile.
     /// Configured at initialization time and used by
-    /// `create_default_commitment()`. Useful for querying the
+    /// `create_commitment_default()`. Useful for querying the
     /// current penalty configuration.
     ///
     /// # Authorization
@@ -1553,8 +1601,15 @@ impl EscrowContract {
         id
     }
 
+    fn is_paused_internal(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
     fn require_not_paused(env: &Env) -> Result<(), Error> {
-        if env.storage().instance().get(&DataKey::Paused).unwrap_or(false) {
+        if Self::is_paused_internal(env) {
             return Err(Error::Paused);
         }
         Ok(())
@@ -1592,6 +1647,30 @@ impl EscrowContract {
             .persistent()
             .get(&DataKey::OwnerIndex(owner))
             .unwrap_or_else(|| Vec::new(env))
+    }
+
+    fn owner_commitment_ids_page(
+        env: &Env,
+        owner: Address,
+        start: u32,
+        limit: u32,
+    ) -> Vec<u64> {
+        let ids = Self::owner_commitment_ids(env, owner);
+        let capped_limit = limit.min(MAX_OWNER_COMMITMENTS_PAGE_LIMIT);
+        let mut page = Vec::new(env);
+
+        if capped_limit == 0 || start >= ids.len() {
+            return page;
+        }
+
+        let end = start.saturating_add(capped_limit).min(ids.len());
+        let mut index = start;
+        while index < end {
+            page.push_back(ids.get(index).unwrap());
+            index += 1;
+        }
+
+        page
     }
 
     /// Remove `id` from `owner`'s OwnerIndex list.
