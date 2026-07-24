@@ -219,6 +219,42 @@ describe('GET /api/commitments/[id]/history', () => {
     expect(settlementEvent.payload.finalStatus).toBe('SETTLED');
   });
 
+  it('keeps the terminal event last when an attestation is observed after expiresAt', async () => {
+    // A late compliance check recorded strictly after the commitment's
+    // expiresAt. The terminal (settlement) event uses expiresAt as a proxy
+    // timestamp, so a naive sort would place this attestation after the
+    // terminal event — producing a history where the "final" event isn't last.
+    const lateAttestation = {
+      ...makeAttestation({
+        id: 'ATTR-LATE',
+        commitmentId: 'CMT-001',
+        kind: 'health_check',
+        observedAt: '2026-03-20T00:00:00Z', // after expiresAt (2026-03-10)
+        severity: 'ok',
+      }),
+      details: { complianceScore: 90, violation: false },
+    };
+
+    mockDeps(
+      { ...MOCK_COMMITMENT, status: 'SETTLED' as const },
+      [lateAttestation],
+    );
+    const result = await callRoute('CMT-001');
+    const { events } = result.data.data;
+
+    // Events must be in ascending chronological order.
+    for (let i = 1; i < events.length; i++) {
+      expect(new Date(events[i].occurredAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(events[i - 1].occurredAt).getTime(),
+      );
+    }
+
+    // The terminal event marks the end of the lifecycle — it must sort last,
+    // even after an attestation observed later than expiresAt.
+    const lastEvent = events[events.length - 1];
+    expect(lastEvent.kind).toBe('settlement');
+  });
+
   it('does not include terminal event for ACTIVE commitment', async () => {
     mockDeps(MOCK_COMMITMENT, []);
     const result = await callRoute('CMT-001');
