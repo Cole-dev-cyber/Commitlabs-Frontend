@@ -85,14 +85,16 @@ export default function RootLayout({
         <WebVitalsReporter />
         <a href="#main-content" className="skip-link">Skip to main content</a>
         <ThemeProvider>
-          <MotionProvider>
-            <ToastProvider>
-              <NetworkMismatchBanner />
-              <AppShellConnectionStatus>{children}</AppShellConnectionStatus>
-              <ScrollToTopButton />
-              <CommandPaletteProvider />
-            </ToastProvider>
-          </MotionProvider>
+          <WalletProvider>
+            <MotionProvider>
+              <ToastProvider>
+                <NetworkMismatchBanner />
+                <AppShellConnectionStatus>{children}</AppShellConnectionStatus>
+                <ScrollToTopButton />
+                <CommandPaletteProvider />
+              </ToastProvider>
+            </MotionProvider>
+          </WalletProvider>
         </ThemeProvider>
       </body>
     </html>

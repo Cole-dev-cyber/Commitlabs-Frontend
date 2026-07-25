@@ -3,6 +3,7 @@
 import { useId } from 'react'
 import styles from './VolatilityExposureMeter.module.css'
 import { useReducedMotion } from '@/lib/a11y/useReducedMotion'
+import styles from './VolatilityExposureMeter.module.css'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

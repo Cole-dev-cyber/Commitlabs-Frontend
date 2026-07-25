@@ -253,7 +253,7 @@ export default function RecentAttestationsPanel({
 
       <div className={styles.attestationsList} role="list">
         {attestations.length === 0 ? (
-          <div role="listitem">
+          <div className={styles.emptyState}>
             <EmptyState title="No attestations available" />
           </div>
         ) : (
@@ -264,7 +264,6 @@ export default function RecentAttestationsPanel({
               className={`${styles.attestationRow} ${getSeverityClass(attestation.severity)}`}
               onClick={() => onSelectAttestation(attestation.id)}
               aria-label={`${attestation.severity} attestation: ${attestation.title}`}
-              role="listitem"
             >
               <div className={styles.rowLeft} aria-hidden="true">
                 {getSeverityIcon(attestation.severity)}
