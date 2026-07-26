@@ -32,6 +32,12 @@ export interface CommitmentSearchResult {
   expiresAt: string
 }
 
+interface MarketplaceStats {
+  activeListings: number;
+  averageYield: number;
+  medianPrice: number;
+}
+
 const SORT_OPTIONS = [
   { value: 'popular', label: 'Most Popular' },
   { value: 'newest', label: 'Newest' },
