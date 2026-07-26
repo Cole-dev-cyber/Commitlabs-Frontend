@@ -6,7 +6,7 @@
 // area and be wired through /marketplace/compare.
 import Link from 'next/link'
 import { useMemo, useState, useEffect } from 'react'
-import { MarketplaceHeader } from '@/components/MarketplaceHeader/MarketplaceHeader'
+import { MarketplaceHeader, type SortValue } from '@/components/MarketplaceHeader/MarketplaceHeader'
 import { MarketplaceGrid } from '@/components/MarketplaceGrid'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { MarketplaceResultsLayout } from '@/components/MarketplaceResultsLayout'
@@ -417,6 +417,7 @@ export default function Marketplace() {
         case 'compliance': return b.score - a.score
         case 'duration': return parseInt(a.duration) - parseInt(b.duration)
         case 'newest': return parseInt(b.id) - parseInt(a.id)
+        case 'popular': return 0
         default: return 0
       }
     })
@@ -427,6 +428,17 @@ export default function Marketplace() {
     const startIndex = (currentPage - 1) * itemsPerPage
     return filteredListings.slice(startIndex, startIndex + itemsPerPage)
   }, [filteredListings, currentPage])
+
+  const handleSortChange = (sortValue: SortValue) => {
+    const sortByMap: Record<SortValue, Filters['sortBy']> = {
+      popular: 'popular',
+      newest: 'newest',
+      priceLow: 'price',
+      priceHigh: 'price-desc',
+    }
+    setFilters((prev) => ({ ...prev, sortBy: sortByMap[sortValue] }))
+    setCurrentPage(1)
+  }
 
   const handleFilterChange = (newFilters: Filters) => {
     updateFilters(newFilters)
@@ -444,6 +456,7 @@ export default function Marketplace() {
         <MarketplaceHeader
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          onSortChange={handleSortChange}
         />
 
         {/* Mobile Filter Toggle */}

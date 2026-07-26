@@ -45,7 +45,7 @@ const SORT_OPTIONS = [
   { value: 'priceHigh', label: 'Price: High to Low' },
 ] as const
 
-type SortValue = (typeof SORT_OPTIONS)[number]['value']
+export type SortValue = (typeof SORT_OPTIONS)[number]['value']
 
 export interface MarketplaceHeaderProps {
   /** Called (debounced) whenever the search query changes. */
@@ -67,6 +67,8 @@ export interface MarketplaceHeaderProps {
   ownerAddress?: string
   /** Called when the user selects a result from the dropdown. */
   onResultSelect?: (item: CommitmentSearchResult) => void
+  /** Called when the user changes the sort order. */
+  onSortChange?: (value: SortValue) => void
 }
 
 const DEFAULT_PLACEHOLDER = 'Search commitments…'
@@ -84,6 +86,7 @@ export function MarketplaceHeader({
   searchQuery: controlledQuery,
   ownerAddress,
   onResultSelect,
+  onSortChange,
 }: MarketplaceHeaderProps) {
   // ── Sort ───────────────────────────────────────────────────────────────────
   const [sortValue, setSortValue] = useState<SortValue>('popular')
@@ -339,7 +342,7 @@ export function MarketplaceHeader({
               id="marketplace-sort"
               className={styles.sortSelect}
               value={sortValue}
-              onChange={(e) => setSortValue(e.target.value as SortValue)}
+              onChange={handleSortChange}
               aria-label="Sort marketplace"
             >
               {SORT_OPTIONS.map((opt) => (
