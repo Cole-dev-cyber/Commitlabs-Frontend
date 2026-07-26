@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useWallet } from '../useWallet';
 
-vi.mock('@stellar/freighter-api', () => ({
+vi.mock('@/lib/freighterAdapter', () => ({
   getAddress: vi.fn(),
   getNetworkDetails: vi.fn(),
 }));
