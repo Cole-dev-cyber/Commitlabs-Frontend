@@ -28,24 +28,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
-          cache: 'pnpm'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build
-        run: pnpm build
+        run: npm run build
         env:
           # Builds must be deterministic for size comparison.
           NODE_ENV: production
 
       - name: Check bundle size budget
-        run: pnpm size
+        run: npm run size

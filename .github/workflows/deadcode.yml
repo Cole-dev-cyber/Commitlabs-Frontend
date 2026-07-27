@@ -27,21 +27,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
-          cache: 'pnpm'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       # Non-blocking while the dead-code backlog is triaged. Flip to a hard
-      # failure (drop continue-on-error) once `pnpm deadcode` is clean.
+      # failure (drop continue-on-error) once `npm run deadcode` is clean.
       - name: Run knip
-        run: pnpm deadcode
+        run: npm run deadcode
         continue-on-error: true
