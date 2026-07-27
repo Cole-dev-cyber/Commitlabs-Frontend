@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fail, getCorrelationId } from "./apiResponse";
+import { attachSecurityHeaders, fail, getCorrelationId } from "./apiResponse";
 import { applyCorsPolicy, enforceCorsRequestPolicy, type CorsRoutePolicy } from "./cors";
 import { ApiError } from "./errors";
 import { logError, logWarn } from "./logger";
@@ -14,13 +14,38 @@ type RouteHandler = (
 interface ApiHandlerOptions {
   cors?: CorsRoutePolicy;
   enableETag?: boolean;
+  /**
+   * Controls the Cache-Control privacy directive emitted on ETag responses.
+   * Use 'public' only for routes whose data is identical for all users (e.g.
+   * static reference data). Routes returning user-specific data (wallet lists,
+   * preferences, etc.) must use 'private' so shared caches/CDNs cannot serve
+   * one user's response to another.
+   *
+   * Defaults to 'private'.
+   */
+  cachePrivacy?: "public" | "private";
+  /**
+   * Controls the security headers (CSP/X-Frame-Options/HSTS/etc.) applied to
+   * every response this handler produces. By default all responses get
+   * attachSecurityHeaders() with the default CSP ("default-src 'self'").
+   *
+   * - csp: override the Content-Security-Policy directive string for routes
+   *   that need different rules (e.g. allowing an image CDN, or a looser
+   *   policy for a login/redirect flow).
+   * - skip: opt out of security headers entirely. Should be rare — prefer
+   *   `csp` over `skip` wherever possible.
+   */
+  security?: {
+    csp?: string;
+    skip?: boolean;
+  };
 }
 
 function finalizeResponse(
   req: NextRequest,
   response: Response,
   correlationId: string,
-  cors?: CorsRoutePolicy,
+  options: ApiHandlerOptions,
 ): Response {
   if (!response.headers.has("x-correlation-id")) {
     response.headers.set("x-correlation-id", correlationId);
@@ -29,7 +54,11 @@ function finalizeResponse(
     response.headers.set("x-request-id", correlationId);
   }
 
-  return cors ? applyCorsPolicy(req, response, cors) : response;
+  if (!options.security?.skip) {
+    response = attachSecurityHeaders(response, options.security?.csp);
+  }
+
+  return options.cors ? applyCorsPolicy(req, response, options.cors) : response;
 }
 
 export function withApiHandler(
@@ -57,22 +86,24 @@ export function withApiHandler(
         if (data) {
           const etag = generateETag(data);
           const ifNoneMatch = req.headers.get("if-none-match");
+          const privacy = options.cachePrivacy ?? "private";
+          const cacheControl = `${privacy}, max-age=0, must-revalidate`;
           
           if (etagMatches(ifNoneMatch, etag)) {
             // Return 304 Not Modified
             const notModifiedResponse = new NextResponse(null, { status: 304 });
             notModifiedResponse.headers.set("ETag", etag);
-            notModifiedResponse.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
-            return finalizeResponse(req, notModifiedResponse, correlationId, options.cors);
+            notModifiedResponse.headers.set("Cache-Control", cacheControl);
+            return finalizeResponse(req, notModifiedResponse, correlationId, options);
           }
           
           // Add ETag to successful response
           response.headers.set("ETag", etag);
-          response.headers.set("Cache-Control", "public, max-age=0, must-revalidate");
+          response.headers.set("Cache-Control", cacheControl);
         }
       }
       
-      return finalizeResponse(req, response, correlationId, options.cors);
+      return finalizeResponse(req, response, correlationId, options);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         logWarn(req, "[API] Handled error", {
@@ -92,7 +123,7 @@ export function withApiHandler(
           err.retryAfterSeconds,
           correlationId,
         );
-        return finalizeResponse(req, response, correlationId, options.cors);
+        return finalizeResponse(req, response, correlationId, options);
       }
 
       const error = err instanceof Error ? err : new Error(String(err));
@@ -110,7 +141,7 @@ export function withApiHandler(
         500,
         correlationId,
       );
-      return finalizeResponse(req, response, correlationId, options.cors);
+      return finalizeResponse(req, response, correlationId, options);
     }
   };
 }
