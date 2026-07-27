@@ -94,16 +94,6 @@ export const POST = withApiHandler(async (req: NextRequest, { params }: Params) 
             error: error instanceof Error ? error.message : 'Unknown resolution error',
         });
 
-        if (
-            error instanceof ValidationError ||
-            error instanceof ConflictError ||
-            error instanceof ForbiddenError
-        ) {
-            // Known API errors are rethrown as-is to be handled by withApiHandler
-            throw error;
-        }
-
-        // Wrap unknown/unexpected errors in a generic InternalError to prevent leaking internal details
-        throw new InternalError('An unexpected error occurred while resolving the dispute');
+        throw error;
     }
 });

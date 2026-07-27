@@ -91,16 +91,6 @@ export const POST = withApiHandler(async (req: NextRequest, { params }: Params) 
             error: error instanceof Error ? error.message : 'Unknown dispute error',
         });
 
-        if (
-            error instanceof ValidationError ||
-            error instanceof NotFoundError ||
-            error instanceof ConflictError
-        ) {
-            // Known API errors are rethrown as-is to be handled by withApiHandler
-            throw error;
-        }
-
-        // Wrap unknown/unexpected errors in a generic InternalError to prevent leaking internal details
-        throw new InternalError('An unexpected error occurred while opening the dispute');
+        throw error;
     }
 });
