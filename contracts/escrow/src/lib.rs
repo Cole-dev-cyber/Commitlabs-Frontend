@@ -45,6 +45,11 @@ const MAX_USER_COMMITMENTS_READ: u32 = 100;
 /// Maximum number of owner commitment ids returned by a single paginated read.
 const MAX_OWNER_COMMITMENTS_PAGE_LIMIT: u32 = 100;
 
+/// Estimated seconds per ledger closure (Soroban mainnet average ~5s).
+const ESTIMATED_LEDGER_SECONDS: u64 = 5;
+/// Additional ledger buffer added to persistence TTL beyond commitment maturity.
+const TTL_MATURITY_BUFFER_LEDGERS: u32 = 100;
+
 /// Storage keys for persistent contract state.
 #[contracttype]
 #[derive(Clone)]
@@ -61,22 +66,16 @@ pub enum DataKey {
     OwnerIndex(Address),
     /// Protocol fee recipient.
     FeeRecipient,
-    /// Yield pool balance used to pay matured release yield.
+    /// On-chain yield pool balance used to pay matured release yield.
     YieldPool,
-    /// Contract pause flag to halt write operations.
+    /// Contract pause flag used to halt write operations and for emergency halts.
     Paused,
-    /// Attestation history for a commitment.
+    /// Historical attestation records keyed by commitment id.
     Attestations(u64),
     /// Dispute record for a commitment, keyed by commitment id.
     Dispute(u64),
     /// Default penalty in basis points for each RiskProfile.
     DefaultPenalty(RiskProfile),
-    /// Contract pause flag used for emergency write halts.
-    Paused,
-    /// On-chain yield pool balance used to pay matured commitment yield.
-    YieldPool,
-    /// Historical attestation records keyed by commitment id.
-    Attestations(u64),
     /// Configurable penalty-free grace period before maturity, in seconds.
     GracePeriodSeconds,
     /// Compliance score threshold that auto-freezes funded commitments.
@@ -194,6 +193,14 @@ pub enum Error {
     InsufficientYieldPool = 10,
     /// Contract is currently paused for emergency halt.
     Paused = 11,
+    /// Asset does not match the configured escrow token.
+    AssetMismatch = 12,
+    /// Owner has insufficient balance to fund the commitment.
+    InsufficientBalance = 13,
+    /// Commitment is in a violated state and cannot be released.
+    CommitmentViolated = 14,
+    /// Provided wasm hash is invalid (e.g. zero hash).
+    InvalidWasmHash = 15,
 }
 
 /// Result of an early exit commitment.
@@ -215,16 +222,6 @@ pub struct SettlementResult {
     pub finalStatus: String,
 }
 
-#[contracttype]
-#[derive(Clone)]
-pub struct AttestationRecord {
-    pub attestor: Address,
-    pub compliance_score: u32,
-    pub timestamp: u64,
-}
-
-const MAX_PENALTY_BPS: u32 = 10_000;
-const SECONDS_PER_DAY: u64 = 86_400;
 const YIELD_BPS_DENOMINATOR: i128 = 3_650_000; // 365 days * 10_000 bps
 
 fn yield_rate_bps(risk: RiskProfile) -> u32 {
@@ -233,6 +230,16 @@ fn yield_rate_bps(risk: RiskProfile) -> u32 {
         RiskProfile::Balanced => 700,
         RiskProfile::Aggressive => 1_000,
     }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateCommitmentEventData {
+    pub asset: Address,
+    pub amount: i128,
+    pub risk: RiskProfile,
+    pub maturity: u64,
+    pub penalty_bps: u32,
 }
 
 #[contracttype]
@@ -461,14 +468,14 @@ impl EscrowContract {
                     .ok_or(Error::InvalidDuration)?,
             )
             .ok_or(Error::InvalidDuration)?;
-        let accrued_yield = Self::calculate_accrued_yield(amount, duration_days, risk)?;
+        let accrued_yield = Self::calculate_accrued_yield(amount, duration_days, risk);
 
         let commitment = Commitment {
             id,
             owner: owner.clone(),
             asset,
             amount,
-            accrued_yield: calculate_accrued_yield(amount, duration_days, risk),
+            accrued_yield,
             risk,
             status: EscrowStatus::Created,
             maturity,
@@ -606,7 +613,7 @@ impl EscrowContract {
                     .ok_or(Error::InvalidDuration)?,
             )
             .ok_or(Error::InvalidDuration)?;
-        let accrued_yield = Self::calculate_accrued_yield(amount, duration_days, risk)?;
+        let accrued_yield = Self::calculate_accrued_yield(amount, duration_days, risk);
         let commitment = Commitment {
             id,
             owner: owner.clone(),
@@ -775,11 +782,6 @@ impl EscrowContract {
         Self::set_yield_pool_balance(env, yield_pool - c.accrued_yield);
         c.status = EscrowStatus::Released;
         Self::save(env, &c);
-
-        // Interactions: External token transfer
-        let token = Self::token_client(&env);
-        let contract = env.current_contract_address();
-        token.transfer(&contract, &c.owner, &total_payout);
 
         env.events().publish(
             (Symbol::new(env, "release"), c.owner.clone()),
@@ -1075,8 +1077,16 @@ impl EscrowContract {
         } else {
             let (penalty, refund_amount) = Self::compute_refund_amount(c.amount, c.penalty_bps)?;
             c.status = EscrowStatus::Refunded;
-            let (_, refund_amount) = Self::compute_refund_amount(c.amount, c.penalty_bps)?;
             paid = refund_amount;
+
+            let fee_recipient: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::FeeRecipient)
+                .ok_or(Error::NotInitialized)?;
+            if penalty > 0 {
+                token.transfer(&contract, &fee_recipient, &penalty);
+            }
         }
 
         // Effects: persist before any external transfer.
@@ -1469,6 +1479,16 @@ impl EscrowContract {
 
     // ── Internal helpers ────────────────────────────────────────────────────
 
+    fn publish_commitment_event<T>(env: &Env, name: &str, c: &Commitment, data: T)
+    where
+        T: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+    {
+        env.events().publish(
+            (Symbol::new(env, name), c.id, c.owner.clone()),
+            data,
+        );
+    }
+
     fn execute_refund(
         env: &Env,
         mut c: Commitment,
@@ -1676,7 +1696,7 @@ impl EscrowContract {
     /// Remove `id` from `owner`'s OwnerIndex list.
     fn deindex_owner(env: &Env, owner: &Address, id: u64) {
         let key = DataKey::OwnerIndex(owner.clone());
-        let mut ids: Vec<u64> = env
+        let ids: Vec<u64> = env
             .storage()
             .persistent()
             .get(&key)
