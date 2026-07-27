@@ -25,7 +25,7 @@ export function useTestNotification(channelId: string) {
         title: 'Test Sent',
         description: `Test notification sent successfully to the ${channelId} channel.`,
       })
-    } catch (err) {
+    } catch (_err) {
       error({
         title: 'Test Failed',
         description: `Failed to send test notification to ${channelId}.`,

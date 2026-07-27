@@ -161,8 +161,12 @@ export default function CreateCommitmentStepConfigure({
     onChangeMaxLoss(Number(e.target.value))
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && canAdvance) onNext()
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+
+    if (canAdvance) {
+      onNext()
+    }
   }
 
   return (
@@ -188,7 +192,7 @@ export default function CreateCommitmentStepConfigure({
           </p>
         </div>
 
-        <form className={styles.form} onKeyDown={handleKeyDown}>
+        <form className={styles.form} onSubmit={handleSubmit} aria-label="Commitment configuration form" noValidate>
           {/* Commitment Amount */}
           <div className={styles.formGroup}>
             <label htmlFor="amount" className={styles.label}>
@@ -471,16 +475,15 @@ export default function CreateCommitmentStepConfigure({
               All parameters are enforced on-chain and cannot be changed after creation. Early exits will incur the penalty shown above.
             </span>
           </div>
-        </form>
+        </div>
 
         <div className={styles.footerActions}>
           <button type="button" className={styles.footerBackButton} onClick={onBack}>
             Back
           </button>
           <button
-            type="button"
+            type="submit"
             className={styles.continueButton}
-            onClick={onNext}
             disabled={!canAdvance}
             aria-disabled={!canAdvance}
             data-testid="configure-continue"
