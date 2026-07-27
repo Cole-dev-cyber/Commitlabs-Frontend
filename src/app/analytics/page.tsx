@@ -69,7 +69,7 @@ type LoadState = 'idle' | 'loading' | 'success' | 'error';
 function generateTrendPoints(
   seed: number,
   periods = 6,
-  labels?: string[]
+  labels?: string[],
 ): Array<{ label: string; value: number }> {
   const defaultLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
   return Array.from({ length: periods }, (_, i) => ({
@@ -115,7 +115,7 @@ function ChartGridSkeleton() {
       aria-busy="true"
       aria-label="Loading charts"
     >
-      {[0, 1].map(i => (
+      {[0, 1].map((i) => (
         <div key={i} className="h-64 bg-[#111] rounded-xl border border-[#222] animate-pulse" />
       ))}
     </div>
@@ -214,7 +214,9 @@ function UserAnalyticsView({ data, state, onRetry, hasWallet }: UserAnalyticsVie
         className="flex flex-col items-center justify-center py-20 text-center gap-4"
       >
         <Users size={48} className="text-[#333]" />
-        <p className="text-[#666] text-base">Connect your wallet to view your personal analytics.</p>
+        <p className="text-[#666] text-base">
+          Connect your wallet to view your personal analytics.
+        </p>
       </div>
     );
   }
@@ -363,7 +365,9 @@ function ProtocolAnalyticsView({ data, state, onRetry }: ProtocolAnalyticsViewPr
       >
         <BarChart2 size={48} className="text-[#333]" />
         <p className="text-[#666] text-base">No protocol-wide data is available yet.</p>
-        <p className="text-[#444] text-sm">Check back once commitments are active on the network.</p>
+        <p className="text-[#444] text-sm">
+          Check back once commitments are active on the network.
+        </p>
       </div>
     );
   }
@@ -548,11 +552,7 @@ export default function AnalyticsPage() {
             <h1 className="text-white text-lg font-semibold tracking-wide">Analytics</h1>
           </div>
 
-          <ViewToggle
-            value={view}
-            onChange={handleViewChange}
-            disabled={false}
-          />
+          <ViewToggle value={view} onChange={handleViewChange} disabled={false} />
         </div>
       </header>
 

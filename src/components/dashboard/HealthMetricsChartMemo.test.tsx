@@ -8,9 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 
 vi.mock('recharts', () => {
-  const Passthrough: React.FC<{ children?: React.ReactNode }> = ({ children }) => (
-    <>{children}</>
-  );
+  const Passthrough: React.FC<{ children?: React.ReactNode }> = ({ children }) => <>{children}</>;
   return {
     LineChart: Passthrough,
     AreaChart: Passthrough,
@@ -24,9 +22,7 @@ vi.mock('recharts', () => {
     CartesianGrid: () => null,
     Tooltip: () => null,
     Legend: ({ content }: { content?: () => React.ReactNode }) => (
-      <div data-testid="chart-legend">
-        {typeof content === 'function' ? content() : null}
-      </div>
+      <div data-testid="chart-legend">{typeof content === 'function' ? content() : null}</div>
     ),
     ReferenceLine: () => null,
     ResponsiveContainer: Passthrough,
@@ -66,24 +62,22 @@ describe('chartConfig', () => {
 
 describe('Health Metrics chart memoization', () => {
   it('wraps each chart export in React.memo', () => {
-    expect(
-      (HealthMetricsComplianceChart as unknown as { $$typeof: symbol }).$$typeof,
-    ).toBe(MEMO_SYMBOL);
-    expect(
-      (HealthMetricsValueHistoryChart as unknown as { $$typeof: symbol }).$$typeof,
-    ).toBe(MEMO_SYMBOL);
-    expect(
-      (HealthMetricsDrawdownChart as unknown as { $$typeof: symbol }).$$typeof,
-    ).toBe(MEMO_SYMBOL);
-    expect(
-      (HealthMetricsFeeGenerationChart as unknown as { $$typeof: symbol }).$$typeof,
-    ).toBe(MEMO_SYMBOL);
+    expect((HealthMetricsComplianceChart as unknown as { $$typeof: symbol }).$$typeof).toBe(
+      MEMO_SYMBOL,
+    );
+    expect((HealthMetricsValueHistoryChart as unknown as { $$typeof: symbol }).$$typeof).toBe(
+      MEMO_SYMBOL,
+    );
+    expect((HealthMetricsDrawdownChart as unknown as { $$typeof: symbol }).$$typeof).toBe(
+      MEMO_SYMBOL,
+    );
+    expect((HealthMetricsFeeGenerationChart as unknown as { $$typeof: symbol }).$$typeof).toBe(
+      MEMO_SYMBOL,
+    );
   });
 
   it('does not re-render a memoized chart when unrelated parent state changes', () => {
-    type MemoComponent = React.MemoExoticComponent<
-      React.FC<{ data: typeof COMPLIANCE_DATA }>
-    >;
+    type MemoComponent = React.MemoExoticComponent<React.FC<{ data: typeof COMPLIANCE_DATA }>>;
     const MemoChart = HealthMetricsComplianceChart as MemoComponent;
     const OriginalType = MemoChart.type;
 
@@ -119,9 +113,7 @@ describe('Health Metrics chart memoization', () => {
   });
 
   it('re-renders when chart data identity changes', () => {
-    type MemoComponent = React.MemoExoticComponent<
-      React.FC<{ data: typeof COMPLIANCE_DATA }>
-    >;
+    type MemoComponent = React.MemoExoticComponent<React.FC<{ data: typeof COMPLIANCE_DATA }>>;
     const MemoChart = HealthMetricsComplianceChart as MemoComponent;
     const OriginalType = MemoChart.type;
 

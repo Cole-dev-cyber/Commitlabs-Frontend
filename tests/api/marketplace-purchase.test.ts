@@ -74,10 +74,10 @@ const TRANSFER_RESULT = {
 
 function purchaseRequest(listingId: string, body?: Record<string, unknown>) {
   return [
-    createMockRequest(
-      `http://localhost:3000/api/marketplace/listings/${listingId}/purchase`,
-      { method: 'POST', body },
-    ),
+    createMockRequest(`http://localhost:3000/api/marketplace/listings/${listingId}/purchase`, {
+      method: 'POST',
+      body,
+    }),
     createMockRouteContext({ id: listingId }),
   ] as const;
 }

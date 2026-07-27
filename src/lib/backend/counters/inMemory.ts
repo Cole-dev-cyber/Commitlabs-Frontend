@@ -1,4 +1,4 @@
-import { CountersAdapter } from "./adapters";
+import { CountersAdapter } from './adapters';
 
 export class InMemoryCounters implements CountersAdapter {
   private rateLimitBlocks = 0;

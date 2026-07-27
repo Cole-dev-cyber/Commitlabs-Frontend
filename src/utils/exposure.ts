@@ -69,10 +69,7 @@ function latestDrawdownFraction(drawdownHistory: DrawdownPoint[]): number | null
   return latest.drawdownPercent;
 }
 
-function computeDrawdownExposurePercent(
-  drawdownFraction: number,
-  maxLossPercent: number,
-): number {
+function computeDrawdownExposurePercent(drawdownFraction: number, maxLossPercent: number): number {
   const drawdownPercent = drawdownFraction * 100;
   return Math.min(100, Math.max(0, (drawdownPercent / maxLossPercent) * 100));
 }

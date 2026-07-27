@@ -120,7 +120,9 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 400 when address exceeds max length', async () => {
-    const res = await POST(makeRequest({ ...VALID_BODY, address: 'G'.repeat(129) }), { params: {} });
+    const res = await POST(makeRequest({ ...VALID_BODY, address: 'G'.repeat(129) }), {
+      params: {},
+    });
     const body = await res.json();
 
     expect(res.status).toBe(400);
@@ -128,7 +130,9 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 400 when signature exceeds max length', async () => {
-    const res = await POST(makeRequest({ ...VALID_BODY, signature: 's'.repeat(1025) }), { params: {} });
+    const res = await POST(makeRequest({ ...VALID_BODY, signature: 's'.repeat(1025) }), {
+      params: {},
+    });
     const body = await res.json();
 
     expect(res.status).toBe(400);
@@ -136,7 +140,9 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 400 when message exceeds max length', async () => {
-    const res = await POST(makeRequest({ ...VALID_BODY, message: 'm'.repeat(2049) }), { params: {} });
+    const res = await POST(makeRequest({ ...VALID_BODY, message: 'm'.repeat(2049) }), {
+      params: {},
+    });
     const body = await res.json();
 
     expect(res.status).toBe(400);
@@ -144,7 +150,10 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 401 on invalid signature', async () => {
-    vi.mocked(verifySignatureWithNonce).mockReturnValue({ valid: false, error: 'Invalid signature' });
+    vi.mocked(verifySignatureWithNonce).mockReturnValue({
+      valid: false,
+      error: 'Invalid signature',
+    });
 
     const res = await POST(makeRequest(VALID_BODY), { params: {} });
     const body = await res.json();
@@ -155,7 +164,10 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 401 on nonce mismatch', async () => {
-    vi.mocked(verifySignatureWithNonce).mockReturnValue({ valid: false, error: 'Nonce address mismatch' });
+    vi.mocked(verifySignatureWithNonce).mockReturnValue({
+      valid: false,
+      error: 'Nonce address mismatch',
+    });
 
     const res = await POST(makeRequest(VALID_BODY), { params: {} });
     const body = await res.json();
@@ -166,7 +178,10 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 401 when nonce is expired or already consumed', async () => {
-    vi.mocked(verifySignatureWithNonce).mockReturnValue({ valid: false, error: 'Invalid or expired nonce' });
+    vi.mocked(verifySignatureWithNonce).mockReturnValue({
+      valid: false,
+      error: 'Invalid or expired nonce',
+    });
 
     const res = await POST(makeRequest(VALID_BODY), { params: {} });
     const body = await res.json();
@@ -198,7 +213,9 @@ describe('POST /api/auth/verify', () => {
   });
 
   it('returns 500 on unexpected handler error', async () => {
-    vi.mocked(verifySignatureWithNonce).mockImplementation(() => { throw new Error('boom'); });
+    vi.mocked(verifySignatureWithNonce).mockImplementation(() => {
+      throw new Error('boom');
+    });
 
     const res = await POST(makeRequest(VALID_BODY), { params: {} });
     const body = await res.json();

@@ -32,9 +32,7 @@ vi.mock('recharts', () => {
     CartesianGrid: ({ vertical, stroke }: { vertical?: boolean; stroke?: string }) => (
       <div data-testid="cartesian-grid" data-vertical={vertical} data-stroke={stroke} />
     ),
-    XAxis: ({ dataKey }: { dataKey?: string }) => (
-      <div data-testid="x-axis" data-key={dataKey} />
-    ),
+    XAxis: ({ dataKey }: { dataKey?: string }) => <div data-testid="x-axis" data-key={dataKey} />,
     YAxis: ({ domain }: { domain?: [number, number] }) => (
       <div data-testid="y-axis" data-domain={domain?.join(',')} />
     ),
@@ -104,8 +102,8 @@ describe('HealthMetricsComplianceChart', () => {
       render(<HealthMetricsComplianceChart data={populatedData} />);
       expect(
         screen.getByText(
-          /Historical compliance score showing how well the commitment has adhered to its rules/i
-        )
+          /Historical compliance score showing how well the commitment has adhered to its rules/i,
+        ),
       ).toBeInTheDocument();
     });
   });
@@ -121,8 +119,8 @@ describe('HealthMetricsComplianceChart', () => {
       render(<HealthMetricsComplianceChart data={[]} />);
       expect(
         screen.getByText(
-          /Historical compliance score showing how well the commitment has adhered to its rules/i
-        )
+          /Historical compliance score showing how well the commitment has adhered to its rules/i,
+        ),
       ).toBeInTheDocument();
     });
 
@@ -150,11 +148,7 @@ describe('HealthMetricsComplianceChart', () => {
       };
 
       const { getByText } = render(
-        <RenderCustomTooltip
-          active={true}
-          label="2026-02-20"
-          payload={[{ value: 100 }]}
-        />
+        <RenderCustomTooltip active={true} label="2026-02-20" payload={[{ value: 100 }]} />,
       );
       expect(getByText('2026-02-20')).toBeInTheDocument();
       expect(getByText('Score: 100')).toBeInTheDocument();
@@ -170,20 +164,12 @@ describe('HealthMetricsComplianceChart', () => {
       };
 
       const { container: containerInactive } = render(
-        <RenderCustomTooltip
-          active={false}
-          label="2026-01-15"
-          payload={[{ value: 92 }]}
-        />
+        <RenderCustomTooltip active={false} label="2026-01-15" payload={[{ value: 92 }]} />,
       );
       expect(containerInactive.firstChild).toBeNull();
 
       const { container: containerEmptyPayload } = render(
-        <RenderCustomTooltip
-          active={true}
-          label="2026-01-15"
-          payload={[]}
-        />
+        <RenderCustomTooltip active={true} label="2026-01-15" payload={[]} />,
       );
       expect(containerEmptyPayload.firstChild).toBeNull();
     });

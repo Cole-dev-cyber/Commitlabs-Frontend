@@ -1,6 +1,7 @@
 # Route Authentication Guard
 
 ## Overview
+
 The wallet authentication guard ensures that users must have a connected wallet to access protected routes.
 
 ## Implementation
@@ -8,6 +9,7 @@ The wallet authentication guard ensures that users must have a connected wallet 
 ### Components
 
 #### RequireWallet
+
 The `RequireWallet` component handles wallet connection status:
 
 ```tsx
@@ -23,18 +25,11 @@ function MyPage() {
 import { ProtectedRouteLayout } from '@/components/auth/ProtectedRouteLayout';
 
 export default function Layout({ children }) {
-  return (
-    <ProtectedRouteLayout>
-      {children}
-    </ProtectedRouteLayout>
-  );
+  return <ProtectedRouteLayout>{children}</ProtectedRouteLayout>;
 }
 import { ProtectedRouteLayout } from '@/components/auth/ProtectedRouteLayout';
 
 export default function Layout({ children }) {
-  return (
-    <ProtectedRouteLayout redirectTo="/">
-      {children}
-    </ProtectedRouteLayout>
-  );
+  return <ProtectedRouteLayout redirectTo="/">{children}</ProtectedRouteLayout>;
 }
+```

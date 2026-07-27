@@ -12,7 +12,9 @@ function readStoredRecentIds(): string[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === 'string').slice(0, MAX_RECENT_LISTINGS);
+    return parsed
+      .filter((item): item is string => typeof item === 'string')
+      .slice(0, MAX_RECENT_LISTINGS);
   } catch {
     return [];
   }
@@ -52,7 +54,7 @@ export function useRecentlyViewed(cap = MAX_RECENT_LISTINGS) {
         return updated;
       });
     },
-    [cap]
+    [cap],
   );
 
   const clearAll = useCallback(() => {
