@@ -181,6 +181,7 @@ function isTestEnvironment(): boolean {
 
 export interface BackendFeatureFlags {
     analyticsUser: boolean;
+    analyticsProtocol: boolean;
     marketplace: boolean;
     marketplaceMockData: boolean;
 }
@@ -204,6 +205,10 @@ function parseFeatureFlagsJson(): Partial<BackendFeatureFlags> {
             analyticsUser:
                 typeof parsed.analyticsUser === 'boolean'
                     ? parsed.analyticsUser
+                    : undefined,
+            analyticsProtocol:
+                typeof parsed.analyticsProtocol === 'boolean'
+                    ? parsed.analyticsProtocol
                     : undefined,
             marketplace:
                 typeof parsed.marketplace === 'boolean'
@@ -229,6 +234,9 @@ export function getFeatureFlags(): BackendFeatureFlags {
         analyticsUser:
             fromJson.analyticsUser ??
             parseBooleanFlag(env.COMMITLABS_FEATURE_ANALYTICS_USER, false),
+        analyticsProtocol:
+            fromJson.analyticsProtocol ??
+            parseBooleanFlag(env.COMMITLABS_FEATURE_ANALYTICS_PROTOCOL, false),
         marketplace:
             fromJson.marketplace ??
             parseBooleanFlag(env.COMMITLABS_FEATURE_MARKETPLACE, false),
