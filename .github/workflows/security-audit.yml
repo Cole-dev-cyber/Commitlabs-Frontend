@@ -1,6 +1,6 @@
 # .github/workflows/security-audit.yml
 # Scans dependencies for known vulnerabilities on PRs and pushes.
-#   - npm audit: fails the build on high/critical advisories in production deps.
+#   - pnpm audit: fails the build on high/critical advisories in production deps.
 #   - dependency-review: flags risky dependency changes introduced by a PR.
 
 name: Security Audit
@@ -20,20 +20,25 @@ permissions:
 
 jobs:
   npm-audit:
-    name: npm audit (prod deps)
+    name: pnpm audit (prod deps)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
+          cache: 'pnpm'
 
       # Requires a lockfile so the audit is reproducible.
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: pnpm audit --prod --audit-level=high
 
   dependency-review:
     name: Dependency review
