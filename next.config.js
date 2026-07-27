@@ -1,11 +1,16 @@
 /** @type {import('next').NextConfig} */
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+});
+
 const nextConfig = {
   reactStrictMode: true,
   eslint: {
-    ignoreDuringBuilds: true,
+    ignoreDuringBuilds: false,
   },
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   webpack: (config, { isServer }) => {
     if (isServer) {
@@ -20,10 +25,13 @@ const nextConfig = {
   },
   images: {
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '**',
-      },
+      { protocol: 'https', hostname: '**.ipfs.io' },
+      { protocol: 'https', hostname: '**.ipfs.dweb.link' },
+      { protocol: 'https', hostname: '**.cf-ipfs.com' },
+      { protocol: 'https', hostname: '**.nftstorage.link' },
+      { protocol: 'https', hostname: 'arweave.net' },
+      { protocol: 'https', hostname: '**.amazonaws.com' },
+      { protocol: 'https', hostname: '**.cloudfront.net' },
     ],
   },
   async headers() {
@@ -65,4 +73,4 @@ const nextConfig = {
   }
 }
 
-module.exports = nextConfig;
+module.exports = withBundleAnalyzer(nextConfig);

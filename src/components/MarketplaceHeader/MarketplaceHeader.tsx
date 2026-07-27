@@ -80,6 +80,11 @@ export function MarketplaceHeader({
   backHref = '/',
   createHref = '/create',
   searchQuery: controlledQuery,
+}: MarketplaceHeaderProps) {
+  const [stats, setStats] = useState<MarketplaceStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [sortValue, setSortValue] = useState<SortValue>('popular');
+  const [query, setQuery] = useState(controlledQuery ?? '');
   ownerAddress,
   onResultSelect,
 }: MarketplaceHeaderProps) {
@@ -142,7 +147,8 @@ export function MarketplaceHeader({
 
       const params = new URLSearchParams({
         ownerAddress: ownerAddress ?? 'marketplace',
-        asset: trimmed,
+        commitmentId: trimmed,
+        pageSize: '5',
       })
 
       apiFetch<{ data?: CommitmentSearchResult[] }>(`/api/commitments/search?${params}`, { signal: controller.signal })
@@ -169,11 +175,11 @@ export function MarketplaceHeader({
   // ── Keyboard navigation ────────────────────────────────────────────────────
   const handleSelect = useCallback(
     (item: CommitmentSearchResult) => {
-      setQuery(item.asset)
+      setQuery(item.commitmentId)
       setIsDropdownOpen(false)
       setActiveIndex(-1)
       onResultSelect?.(item)
-      onSearchChange?.(item.asset)
+      onSearchChange?.(item.commitmentId)
     },
     [onResultSelect, onSearchChange],
   )
@@ -303,9 +309,9 @@ export function MarketplaceHeader({
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => handleSelect(item)}
                   >
-                    <span className={styles.dropdownItemAsset}>{item.asset}</span>
+                    <span className={styles.dropdownItemAsset}>{item.commitmentId}</span>
                     <span className={styles.dropdownItemMeta}>
-                      {item.riskType} · {item.amount}
+                      {item.asset} · {item.riskType} · {item.amount}
                     </span>
                   </li>
                 ))
