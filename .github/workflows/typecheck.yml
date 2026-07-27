@@ -28,22 +28,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
-          cache: 'pnpm'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       # Non-blocking while the type-error backlog is burned down.
-      # Flip to a hard failure (drop continue-on-error) once `pnpm typecheck`
+      # Flip to a hard failure (drop continue-on-error) once `npm run typecheck`
       # is clean. Uses the same tsconfig.json as the build to avoid drift.
       - name: Typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
         continue-on-error: true
