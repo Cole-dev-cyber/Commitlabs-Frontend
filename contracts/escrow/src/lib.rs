@@ -298,6 +298,7 @@ pub struct ResolveDisputeEventData {
 pub struct EscrowContract;
 
 #[contractimpl]
+#[allow(deprecated)] // `Events::publish` is deprecated in favor of the #[contractevent] macro; existing contract continues to use publish for off-chain indexer compatibility (see contracts/README.md)
 impl EscrowContract {
     /// One-time initialization. Sets the admin, the escrow token, fee recipient,
     /// and default penalty rates for each risk profile. Default penalties should
@@ -417,6 +418,63 @@ impl EscrowContract {
             .instance()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    }
+
+    /// Rotate the contract administrator. Admin only.
+    ///
+    /// After rotation, `DataKey::Admin` points to `new_admin`, so the new admin
+    /// becomes the sole authority for subsequent admin-gated operations
+    /// (pause/unpause, set_fee_recipient, upgrade, resolve_dispute, etc.).
+    ///
+    /// # Authorization
+    /// Only callable by: current admin (must sign with `require_auth`).
+    ///
+    /// # Errors
+    /// - `NotInitialized` — contract has not been initialized
+    /// - `Unauthorized` — caller is not the current admin
+    pub fn set_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        Self::require_init(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.events()
+            .publish((Symbol::new(&env, "set_admin"), admin), new_admin);
+        Ok(())
+    }
+
+    /// Rotate the protocol fee recipient. Admin only.
+    ///
+    /// The fee recipient is the address that receives early-exit penalties
+    /// during `refund` and `resolve_dispute`. Because authorization is read
+    /// fresh from storage on every call, this method is automatically
+    /// re-authorized by any admin that was rotated via `set_admin`.
+    ///
+    /// # Authorization
+    /// Only callable by: current admin (must sign with `require_auth`).
+    ///
+    /// # Errors
+    /// - `NotInitialized` — contract has not been initialized
+    /// - `Unauthorized` — caller is not the current admin
+    pub fn set_fee_recipient(env: Env, new_fee_recipient: Address) -> Result<(), Error> {
+        Self::require_init(&env)?;
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::FeeRecipient, &new_fee_recipient);
+        env.events().publish(
+            (Symbol::new(&env, "set_fee_recipient"), admin),
+            new_fee_recipient,
+        );
+        Ok(())
     }
 
     /// Create a new (unfunded) commitment escrow. Returns the new commitment id.
