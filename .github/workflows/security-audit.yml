@@ -57,14 +57,14 @@ jobs:
     runs-on: ubuntu-latest
     # Dependency review only runs on pull requests.
     if: github.event_name == 'pull_request'
-    # Non-blocking: requires the "Dependency graph" repo setting to be
-    # enabled (see header comment) - not fixable from workflow code.
-    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      # Non-blocking: requires the "Dependency graph" repo setting to be
+      # enabled (see header comment) - not fixable from workflow code.
       - name: Review dependency changes
         uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
           fail-on-severity: high
