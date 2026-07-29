@@ -621,6 +621,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/SuccessEnvelope'
 
+  /api/analytics/protocol:
+    get:
+      summary: Protocol-wide analytics
+      description: Returns aggregate protocol-wide analytics (total/active/settled/violated commitments, TVL, fees, compliance). Requires the analyticsProtocol feature flag.
+      responses:
+        '200':
+          description: Protocol analytics retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelope'
+        '404':
+          description: Protocol analytics endpoint is disabled.
+    options:
+      summary: Analytics protocol CORS preflight
+      responses:
+        '204':
+          description: CORS preflight response.
+
   /api/analytics/user:
     options:
       summary: Analytics user CORS preflight
