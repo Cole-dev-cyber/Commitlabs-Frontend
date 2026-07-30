@@ -5,14 +5,6 @@ export const metadata = {
   description: 'Create a new commitment on Commitlabs',
 };
 
-export default function CreateLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <ProtectedRouteLayout>
-      {children}
-    </ProtectedRouteLayout>
-  );
+export default function CreateLayout({ children }: { children: React.ReactNode }) {
+  return <ProtectedRouteLayout>{children}</ProtectedRouteLayout>;
 }

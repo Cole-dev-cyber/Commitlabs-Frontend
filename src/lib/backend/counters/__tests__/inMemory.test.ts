@@ -1,54 +1,54 @@
-import { InMemoryCounters } from "../inMemory";
+import { InMemoryCounters } from '../inMemory';
 
-describe("InMemoryCounters", () => {
+describe('InMemoryCounters', () => {
   let counters: InMemoryCounters;
 
   beforeEach(() => {
     counters = new InMemoryCounters();
   });
 
-  describe("incrementRateLimitBlocks", () => {
-    it("should increment the rate limit blocks counter", async () => {
-      expect(counters["rateLimitBlocks"]).toBe(0);
+  describe('incrementRateLimitBlocks', () => {
+    it('should increment the rate limit blocks counter', async () => {
+      expect(counters['rateLimitBlocks']).toBe(0);
       await counters.incrementRateLimitBlocks();
-      expect(counters["rateLimitBlocks"]).toBe(1);
+      expect(counters['rateLimitBlocks']).toBe(1);
       await counters.incrementRateLimitBlocks();
-      expect(counters["rateLimitBlocks"]).toBe(2);
+      expect(counters['rateLimitBlocks']).toBe(2);
     });
   });
 
-  describe("incrementAuthFailures", () => {
-    it("should increment the auth failures counter", async () => {
-      expect(counters["authFailures"]).toBe(0);
+  describe('incrementAuthFailures', () => {
+    it('should increment the auth failures counter', async () => {
+      expect(counters['authFailures']).toBe(0);
       await counters.incrementAuthFailures();
-      expect(counters["authFailures"]).toBe(1);
+      expect(counters['authFailures']).toBe(1);
       await counters.incrementAuthFailures();
-      expect(counters["authFailures"]).toBe(2);
+      expect(counters['authFailures']).toBe(2);
     });
   });
 
-  describe("incrementChainFailures", () => {
-    it("should increment the chain failures counter", async () => {
-      expect(counters["chainFailures"]).toBe(0);
+  describe('incrementChainFailures', () => {
+    it('should increment the chain failures counter', async () => {
+      expect(counters['chainFailures']).toBe(0);
       await counters.incrementChainFailures();
-      expect(counters["chainFailures"]).toBe(1);
+      expect(counters['chainFailures']).toBe(1);
       await counters.incrementChainFailures();
-      expect(counters["chainFailures"]).toBe(2);
+      expect(counters['chainFailures']).toBe(2);
     });
   });
 
-  describe("incrementSuccessfulActions", () => {
-    it("should increment the successful actions counter", async () => {
-      expect(counters["successfulActions"]).toBe(0);
+  describe('incrementSuccessfulActions', () => {
+    it('should increment the successful actions counter', async () => {
+      expect(counters['successfulActions']).toBe(0);
       await counters.incrementSuccessfulActions();
-      expect(counters["successfulActions"]).toBe(1);
+      expect(counters['successfulActions']).toBe(1);
       await counters.incrementSuccessfulActions();
-      expect(counters["successfulActions"]).toBe(2);
+      expect(counters['successfulActions']).toBe(2);
     });
   });
 
-  describe("getMetrics", () => {
-    it("should return the current metrics with correct initial values", async () => {
+  describe('getMetrics', () => {
+    it('should return the current metrics with correct initial values', async () => {
       const metrics = await counters.getMetrics();
       expect(metrics).toEqual({
         rate_limit_blocks: 0,
@@ -59,7 +59,7 @@ describe("InMemoryCounters", () => {
       });
     });
 
-    it("should return updated metrics after increments", async () => {
+    it('should return updated metrics after increments', async () => {
       await counters.incrementRateLimitBlocks();
       await counters.incrementRateLimitBlocks();
       await counters.incrementAuthFailures();
@@ -80,24 +80,24 @@ describe("InMemoryCounters", () => {
     });
   });
 
-  describe("reset", () => {
-    it("should reset all counters to zero", async () => {
+  describe('reset', () => {
+    it('should reset all counters to zero', async () => {
       await counters.incrementRateLimitBlocks();
       await counters.incrementAuthFailures();
       await counters.incrementChainFailures();
       await counters.incrementSuccessfulActions();
 
-      expect(counters["rateLimitBlocks"]).toBe(1);
-      expect(counters["authFailures"]).toBe(1);
-      expect(counters["chainFailures"]).toBe(1);
-      expect(counters["successfulActions"]).toBe(1);
+      expect(counters['rateLimitBlocks']).toBe(1);
+      expect(counters['authFailures']).toBe(1);
+      expect(counters['chainFailures']).toBe(1);
+      expect(counters['successfulActions']).toBe(1);
 
       await counters.reset();
 
-      expect(counters["rateLimitBlocks"]).toBe(0);
-      expect(counters["authFailures"]).toBe(0);
-      expect(counters["chainFailures"]).toBe(0);
-      expect(counters["successfulActions"]).toBe(0);
+      expect(counters['rateLimitBlocks']).toBe(0);
+      expect(counters['authFailures']).toBe(0);
+      expect(counters['chainFailures']).toBe(0);
+      expect(counters['successfulActions']).toBe(0);
     });
   });
 });

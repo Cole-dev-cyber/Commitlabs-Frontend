@@ -5,14 +5,6 @@ export const metadata = {
   description: 'View your commitments on Commitlabs',
 };
 
-export default function CommitmentsLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <ProtectedRouteLayout>
-      {children}
-    </ProtectedRouteLayout>
-  );
+export default function CommitmentsLayout({ children }: { children: React.ReactNode }) {
+  return <ProtectedRouteLayout>{children}</ProtectedRouteLayout>;
 }

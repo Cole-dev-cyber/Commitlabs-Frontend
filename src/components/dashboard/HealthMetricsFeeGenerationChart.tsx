@@ -56,13 +56,11 @@ const CustomTooltip = ({ active, payload, label }: TooltipPayload) => {
   return null;
 };
 
-const HealthMetricsFeeGenerationChartComponent: React.FC<
-  HealthMetricsFeeGenerationChartProps
-> = ({ data, exposure }) => {
-  const yTickFormatter = useCallback(
-    (value: number) => formatPlainNumberTick(value),
-    [],
-  );
+const HealthMetricsFeeGenerationChartComponent: React.FC<HealthMetricsFeeGenerationChartProps> = ({
+  data,
+  exposure,
+}) => {
+  const yTickFormatter = useCallback((value: number) => formatPlainNumberTick(value), []);
 
   const renderLegend = useCallback(
     () => (
@@ -75,10 +73,7 @@ const HealthMetricsFeeGenerationChartComponent: React.FC<
   );
 
   const barCells = useMemo(
-    () =>
-      data.map((_, index) => (
-        <Cell key={`cell-${index}`} filter="url(#feeBarGlow)" />
-      )),
+    () => data.map((_, index) => <Cell key={`cell-${index}`} filter="url(#feeBarGlow)" />),
     [data],
   );
 
@@ -86,11 +81,7 @@ const HealthMetricsFeeGenerationChartComponent: React.FC<
     <>
       <div className="w-full h-full min-h-[350px] bg-[#111] rounded-xl p-4 sm:p-6 border border-[#222] shadow-[inset_0_1px_1px_rgba(255,255,255,0.03)]">
         <ResponsiveContainer width="100%" height={300}>
-          <BarChart
-            data={data}
-            margin={CHART_MARGIN_DEFAULT}
-            barCategoryGap="20%"
-          >
+          <BarChart data={data} margin={CHART_MARGIN_DEFAULT} barCategoryGap="20%">
             <defs>
               <linearGradient id="feeBarGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={CHART_COLORS.teal} stopOpacity={1} />
@@ -104,10 +95,7 @@ const HealthMetricsFeeGenerationChartComponent: React.FC<
             <CartesianGrid {...CHART_GRID_PROPS} />
             <XAxis {...CHART_X_AXIS_PROPS} />
             <YAxis {...CHART_Y_AXIS_PROPS} tickFormatter={yTickFormatter} />
-            <Tooltip
-              content={<CustomTooltip />}
-              cursor={CHART_TOOLTIP_CURSOR_BAR}
-            />
+            <Tooltip content={<CustomTooltip />} cursor={CHART_TOOLTIP_CURSOR_BAR} />
             <Legend {...CHART_LEGEND_LAYOUT} content={renderLegend} />
             <Bar
               dataKey="feeAmount"
@@ -121,8 +109,7 @@ const HealthMetricsFeeGenerationChartComponent: React.FC<
         </ResponsiveContainer>
         <div className="mt-4 pt-4 border-t border-[#222]">
           <p className="text-[#99a1af] text-sm leading-relaxed text-center sm:text-left">
-            View fees generated over the commitment period from yield and protocol
-            incentives.
+            View fees generated over the commitment period from yield and protocol incentives.
           </p>
         </div>
       </div>
@@ -139,7 +126,5 @@ const HealthMetricsFeeGenerationChartComponent: React.FC<
   );
 };
 
-export const HealthMetricsFeeGenerationChart = React.memo(
-  HealthMetricsFeeGenerationChartComponent,
-);
+export const HealthMetricsFeeGenerationChart = React.memo(HealthMetricsFeeGenerationChartComponent);
 HealthMetricsFeeGenerationChart.displayName = 'HealthMetricsFeeGenerationChart';

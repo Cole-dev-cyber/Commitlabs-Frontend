@@ -149,9 +149,6 @@ describe('GET /api/marketplace/stats — rate limiting', () => {
     const req = makeRequest();
     await GET(req, { params: {} });
 
-    expect(mockCheckRateLimit).toHaveBeenCalledWith(
-      expect.any(String),
-      'api/marketplace/stats',
-    );
+    expect(mockCheckRateLimit).toHaveBeenCalledWith(expect.any(String), 'api/marketplace/stats');
   });
 });

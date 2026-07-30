@@ -69,19 +69,14 @@ const CustomTooltip = ({ active, payload, label }: TooltipPayload) => {
   return null;
 };
 
-const HealthMetricsDrawdownChartComponent: React.FC<
-  HealthMetricsDrawdownChartProps
-> = ({
+const HealthMetricsDrawdownChartComponent: React.FC<HealthMetricsDrawdownChartProps> = ({
   data,
   thresholdPercent,
   volatilityPercent,
   lifecycleEvents = [],
   exposure,
 }) => {
-  const yTickFormatter = useCallback(
-    (value: number) => formatDrawdownAxisTick(value),
-    [],
-  );
+  const yTickFormatter = useCallback((value: number) => formatDrawdownAxisTick(value), []);
 
   const renderLegend = useCallback(
     () => (
@@ -97,8 +92,7 @@ const HealthMetricsDrawdownChartComponent: React.FC<
     Boolean(exposure) ||
     (typeof volatilityPercent === 'number' && Number.isFinite(volatilityPercent));
   const meterPercent =
-    exposure?.exposurePercent ??
-    (typeof volatilityPercent === 'number' ? volatilityPercent : 0);
+    exposure?.exposurePercent ?? (typeof volatilityPercent === 'number' ? volatilityPercent : 0);
 
   return (
     <>
@@ -113,11 +107,7 @@ const HealthMetricsDrawdownChartComponent: React.FC<
             </defs>
             <CartesianGrid {...CHART_GRID_PROPS} />
             <XAxis {...CHART_X_AXIS_PROPS} />
-            <YAxis
-              {...CHART_Y_AXIS_PROPS}
-              domain={[0, 1]}
-              tickFormatter={yTickFormatter}
-            />
+            <YAxis {...CHART_Y_AXIS_PROPS} domain={[0, 1]} tickFormatter={yTickFormatter} />
             <Tooltip content={<CustomTooltip />} cursor={CHART_TOOLTIP_CURSOR_LINE} />
             <Legend {...CHART_LEGEND_LAYOUT} content={renderLegend} />
             {thresholdPercent !== undefined && (
@@ -157,8 +147,8 @@ const HealthMetricsDrawdownChartComponent: React.FC<
         </ResponsiveContainer>
         <div className="mt-4 pt-4 border-t border-[#222]">
           <p className="text-[#99a1af] text-sm leading-relaxed">
-            Monitor the maximum loss from peak value. Red line shows current
-            drawdown, dashed line is your threshold.
+            Monitor the maximum loss from peak value. Red line shows current drawdown, dashed line
+            is your threshold.
           </p>
         </div>
       </div>
@@ -175,7 +165,5 @@ const HealthMetricsDrawdownChartComponent: React.FC<
   );
 };
 
-export const HealthMetricsDrawdownChart = React.memo(
-  HealthMetricsDrawdownChartComponent,
-);
+export const HealthMetricsDrawdownChart = React.memo(HealthMetricsDrawdownChartComponent);
 HealthMetricsDrawdownChart.displayName = 'HealthMetricsDrawdownChart';
