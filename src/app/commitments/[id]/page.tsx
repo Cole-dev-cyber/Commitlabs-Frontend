@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { notFound, useRouter } from 'next/navigation';
 import CommitmentDetailHeader from '@/components/Commitmentdetailheader';
 import CommitmentHealthMetrics from '@/components/dashboard/CommitmentHealthMetrics';
@@ -20,7 +20,8 @@ import { CommitmentStatusProvider, useCommitmentStatus } from '@/context/Commitm
 import { useShareLink } from '@/hooks/useShareLink';
 import { useToast } from '@/components/toast/ToastProvider';
 import { getAppExplorerNetwork } from './explorerNetwork';
-import { Breadcrumbs } from '@/components/shell/Breadcrumbs';
+import { useRecentlyViewed, RECENTLY_VIEWED_COMMITMENTS_KEY } from '@/hooks/useRecentlyViewed';
+import { RecentlyViewedCommitmentsRail } from '@/components/RecentlyViewedCommitmentsRail';
 
 // Mock Commitments
 const MOCK_COMMITMENTS: Record<
@@ -169,6 +170,23 @@ export default function CommitmentDetailPage({
     const attestationsRef = useRef<HTMLDivElement>(null);
     const { success: showSuccess, error: showError } = useToast();
 
+    const { recentIds, addView } = useRecentlyViewed(5, RECENTLY_VIEWED_COMMITMENTS_KEY);
+
+    useEffect(() => {
+        addView(commitment.id);
+        // Only record a view when the viewed commitment id changes -- `addView`
+        // is stable across renders but is intentionally omitted here since
+        // including it would re-run this on every render of the hook's own
+        // setState (it's recreated whenever `recentIds` changes).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [commitment.id]);
+
+    const recentlyViewedEntries = recentIds
+        .filter((id) => id !== commitment.id)
+        .map((id) => getCommitmentById(id))
+        .filter((c): c is NonNullable<typeof c> => c !== null)
+        .map((c) => ({ id: c.id, type: c.type, durationDays: c.duration }));
+
     const handleCopy = async (text: string, label: string) => {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             try {
@@ -292,6 +310,8 @@ export default function CommitmentDetailPage({
                                 onSettle={handleSettle}
                                 commitmentId={commitment.id}
                             />
+
+                            <RecentlyViewedCommitmentsRail entries={recentlyViewedEntries} />
                         </div>
                     </div>
                 </div>
