@@ -566,6 +566,7 @@ export default function AnalyticsPage() {
 
   return (
     <main id="main-content" className="min-h-screen bg-[#0a0a0a]">
+      <KeyboardShortcutsOverlay />
       {/* Header */}
       <header className="sticky top-0 z-10 bg-[#0a0a0a]/90 backdrop-blur-sm border-b border-[#1a1a1a]">
         <div className="px-6 sm:px-10 lg:px-16 py-4 flex items-center justify-between gap-4 flex-wrap">
