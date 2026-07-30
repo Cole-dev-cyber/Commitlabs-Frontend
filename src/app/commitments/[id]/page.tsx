@@ -20,6 +20,7 @@ import { CommitmentStatusProvider, useCommitmentStatus } from '@/context/Commitm
 import { useShareLink } from '@/hooks/useShareLink';
 import { useToast } from '@/components/toast/ToastProvider';
 import { getAppExplorerNetwork } from './explorerNetwork';
+import { Breadcrumbs } from '@/components/shell/Breadcrumbs';
 
 // Mock Commitments
 const MOCK_COMMITMENTS: Record<
@@ -218,7 +219,9 @@ export default function CommitmentDetailPage({
         <CommitmentStatusProvider commitmentId={commitment.id}>
             <main id="main-content" className="min-h-screen bg-[#050505] text-[#f5f5f7] p-4 sm:p-8 lg:p-12">
                 <div className="max-w-7xl mx-auto space-y-8">
-                    
+
+                    <Breadcrumbs currentLabel={`${commitment.type} Commitment`} />
+
                     <CommitmentDetailHeaderWithStatus
                         commitmentId={commitment.id}
                         commitmentType={commitment.type}
