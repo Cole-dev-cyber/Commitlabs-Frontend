@@ -31,6 +31,29 @@ import { KPICard } from '@/components/KPICard';
 import { useWallet } from '@/hooks/useWallet';
 import AnalyticsTrendLineChart from '@/components/analytics/AnalyticsTrendLineChart';
 import AnalyticsTrendBarChart from '@/components/analytics/AnalyticsTrendBarChart';
+import { usePageTour, type PageTourStep } from '@/hooks/usePageTour';
+import { GuidedTour } from '@/components/onboarding/GuidedTour';
+
+const ANALYTICS_TOUR_STEPS: PageTourStep[] = [
+  {
+    targetSelector: '[data-testid="analytics-view-toggle"]',
+    title: 'Switch views',
+    content: 'Toggle between "My Stats" (your own commitments) and "Protocol" (protocol-wide) analytics.',
+    position: 'bottom',
+  },
+  {
+    targetSelector: '[data-testid="analytics-kpi-section"]',
+    title: 'Key metrics',
+    content: 'These cards summarize your commitment activity at a glance -- totals, active count, value committed, and fees earned.',
+    position: 'bottom',
+  },
+  {
+    targetSelector: '[data-testid="analytics-charts-section"]',
+    title: 'Trend charts',
+    content: 'Track how your compliance score and earned fees have moved over recent periods.',
+    position: 'top',
+  },
+];
 
 // ============================================================================
 // TYPES
@@ -137,6 +160,7 @@ function ViewToggle({ value, onChange, disabled }: ViewToggleProps) {
     <div
       role="group"
       aria-label="Analytics view"
+      data-testid="analytics-view-toggle"
       className="inline-flex rounded-lg overflow-hidden border border-[#333] bg-[#111]"
     >
       {(['user', 'protocol'] as ViewMode[]).map((mode) => {
@@ -251,7 +275,7 @@ function UserAnalyticsView({ data, state, onRetry, hasWallet }: UserAnalyticsVie
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
-      <section aria-label="Your key metrics">
+      <section aria-label="Your key metrics" data-testid="analytics-kpi-section">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KPICard
             label="Total Commitments"
@@ -307,7 +331,7 @@ function UserAnalyticsView({ data, state, onRetry, hasWallet }: UserAnalyticsVie
       </section>
 
       {/* Trend Charts */}
-      <section aria-label="Your trend charts">
+      <section aria-label="Your trend charts" data-testid="analytics-charts-section">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <AnalyticsTrendLineChart
             title="Compliance Score Trend"
@@ -479,6 +503,17 @@ export default function AnalyticsPage() {
   const [protocolData, setProtocolData] = useState<ProtocolAnalyticsData | null>(null);
   const [protocolState, setProtocolState] = useState<LoadState>('idle');
 
+  const {
+    isActive: isTourActive,
+    currentStepIndex: tourStepIndex,
+    currentStep: tourStep,
+    totalSteps: tourTotalSteps,
+    startTour,
+    nextStep: nextTourStep,
+    prevStep: prevTourStep,
+    skipTour,
+  } = usePageTour(ANALYTICS_TOUR_STEPS, 'commitlabs:seen-analytics-tour');
+
   // ─── Fetch user analytics ─────────────────────────────────────────────────
   const fetchUserAnalytics = useCallback(async () => {
     if (!address) return;
@@ -529,8 +564,6 @@ export default function AnalyticsPage() {
     setView(mode);
   };
 
-  const isAnyLoading = userState === 'loading' || protocolState === 'loading';
-
   return (
     <main id="main-content" className="min-h-screen bg-[#0a0a0a]">
       {/* Header */}
@@ -548,13 +581,33 @@ export default function AnalyticsPage() {
             <h1 className="text-white text-lg font-semibold tracking-wide">Analytics</h1>
           </div>
 
-          <ViewToggle
-            value={view}
-            onChange={handleViewChange}
-            disabled={false}
-          />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={startTour}
+              className="text-xs font-medium text-[#666] hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0ff0fc] rounded"
+              data-testid="analytics-tour-button"
+            >
+              Take a tour
+            </button>
+            <ViewToggle
+              value={view}
+              onChange={handleViewChange}
+              disabled={false}
+            />
+          </div>
         </div>
       </header>
+
+      <GuidedTour
+        isActive={isTourActive}
+        currentStepIndex={tourStepIndex}
+        currentStepConfig={tourStep}
+        totalSteps={tourTotalSteps}
+        onNext={nextTourStep}
+        onBack={prevTourStep}
+        onSkip={skipTour}
+      />
 
       {/* Body */}
       <div className="px-6 sm:px-10 lg:px-16 py-8 space-y-6">
