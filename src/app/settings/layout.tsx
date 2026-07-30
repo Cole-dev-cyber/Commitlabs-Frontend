@@ -5,14 +5,6 @@ export const metadata = {
   description: 'Manage your Commitlabs settings',
 };
 
-export default function SettingsLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <ProtectedRouteLayout>
-      {children}
-    </ProtectedRouteLayout>
-  );
+export default function SettingsLayout({ children }: { children: React.ReactNode }) {
+  return <ProtectedRouteLayout>{children}</ProtectedRouteLayout>;
 }

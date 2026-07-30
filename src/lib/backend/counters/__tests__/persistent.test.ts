@@ -1,10 +1,10 @@
-import { PersistentCounters } from "../persistent";
-import { vi } from "vitest";
+import { PersistentCounters } from '../persistent';
+import { vi } from 'vitest';
 
 // Mock ioredis
 const mockRedisData = new Map<string, number>();
 
-vi.mock("ioredis", () => {
+vi.mock('ioredis', () => {
   return {
     default: class MockRedis {
       constructor() {
@@ -30,17 +30,17 @@ vi.mock("ioredis", () => {
   };
 });
 
-describe("PersistentCounters", () => {
+describe('PersistentCounters', () => {
   let counters: PersistentCounters;
 
   beforeEach(() => {
     // Clear the mock data before each test
     mockRedisData.clear();
-    counters = new PersistentCounters("redis://localhost:6379");
+    counters = new PersistentCounters('redis://localhost:6379');
   });
 
-  describe("incrementRateLimitBlocks", () => {
-    it("should increment the rate limit blocks counter in Redis", async () => {
+  describe('incrementRateLimitBlocks', () => {
+    it('should increment the rate limit blocks counter in Redis', async () => {
       await counters.incrementRateLimitBlocks();
       await counters.incrementRateLimitBlocks();
 
@@ -50,8 +50,8 @@ describe("PersistentCounters", () => {
     });
   });
 
-  describe("incrementAuthFailures", () => {
-    it("should increment the auth failures counter in Redis", async () => {
+  describe('incrementAuthFailures', () => {
+    it('should increment the auth failures counter in Redis', async () => {
       await counters.incrementAuthFailures();
       await counters.incrementAuthFailures();
 
@@ -61,8 +61,8 @@ describe("PersistentCounters", () => {
     });
   });
 
-  describe("incrementChainFailures", () => {
-    it("should increment the chain failures counter in Redis", async () => {
+  describe('incrementChainFailures', () => {
+    it('should increment the chain failures counter in Redis', async () => {
       await counters.incrementChainFailures();
       await counters.incrementChainFailures();
 
@@ -72,8 +72,8 @@ describe("PersistentCounters", () => {
     });
   });
 
-  describe("incrementSuccessfulActions", () => {
-    it("should increment the successful actions counter in Redis", async () => {
+  describe('incrementSuccessfulActions', () => {
+    it('should increment the successful actions counter in Redis', async () => {
       await counters.incrementSuccessfulActions();
       await counters.incrementSuccessfulActions();
 
@@ -83,8 +83,8 @@ describe("PersistentCounters", () => {
     });
   });
 
-  describe("getMetrics", () => {
-    it("should return the current metrics with correct initial values", async () => {
+  describe('getMetrics', () => {
+    it('should return the current metrics with correct initial values', async () => {
       const metrics = await counters.getMetrics();
       expect(metrics).toEqual({
         rate_limit_blocks: 0,
@@ -95,7 +95,7 @@ describe("PersistentCounters", () => {
       });
     });
 
-    it("should return updated metrics after increments", async () => {
+    it('should return updated metrics after increments', async () => {
       await counters.incrementRateLimitBlocks();
       await counters.incrementRateLimitBlocks();
       await counters.incrementAuthFailures();
@@ -116,8 +116,8 @@ describe("PersistentCounters", () => {
     });
   });
 
-  describe("reset", () => {
-    it("should reset all counters to zero", async () => {
+  describe('reset', () => {
+    it('should reset all counters to zero', async () => {
       await counters.incrementRateLimitBlocks();
       await counters.incrementAuthFailures();
       await counters.incrementChainFailures();

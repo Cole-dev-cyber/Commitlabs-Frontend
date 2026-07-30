@@ -39,7 +39,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <RequireWallet>
           <div>Protected Content</div>
-        </RequireWallet>
+        </RequireWallet>,
       );
 
       expect(screen.getByText('Connecting wallet...')).toBeInTheDocument();
@@ -57,11 +57,13 @@ describe('Wallet Auth Guard', () => {
       render(
         <RequireWallet>
           <div>Protected Content</div>
-        </RequireWallet>
+        </RequireWallet>,
       );
 
       expect(screen.getByText('Wallet Required')).toBeInTheDocument();
-      expect(screen.getByText('Please connect your wallet to access this page.')).toBeInTheDocument();
+      expect(
+        screen.getByText('Please connect your wallet to access this page.'),
+      ).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Connect Wallet' })).toBeInTheDocument();
       expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
     });
@@ -77,7 +79,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <RequireWallet>
           <div>Protected Content</div>
-        </RequireWallet>
+        </RequireWallet>,
       );
 
       expect(screen.getByText('Connection failed')).toBeInTheDocument();
@@ -94,7 +96,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <RequireWallet>
           <div>Protected Content</div>
-        </RequireWallet>
+        </RequireWallet>,
       );
 
       expect(screen.getByText('Protected Content')).toBeInTheDocument();
@@ -113,7 +115,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <RequireWallet>
           <div>Protected Content</div>
-        </RequireWallet>
+        </RequireWallet>,
       );
 
       const button = screen.getByRole('button', { name: 'Connect Wallet' });
@@ -133,7 +135,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <RequireWallet redirectTo="/login">
           <div>Protected Content</div>
-        </RequireWallet>
+        </RequireWallet>,
       );
 
       await waitFor(() => {
@@ -154,7 +156,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <ProtectedRouteLayout>
           <div>Protected Content</div>
-        </ProtectedRouteLayout>
+        </ProtectedRouteLayout>,
       );
 
       expect(screen.getByText('Wallet Required')).toBeInTheDocument();
@@ -172,7 +174,7 @@ describe('Wallet Auth Guard', () => {
       render(
         <ProtectedRouteLayout>
           <div>Protected Content</div>
-        </ProtectedRouteLayout>
+        </ProtectedRouteLayout>,
       );
 
       expect(screen.getByText('Protected Content')).toBeInTheDocument();

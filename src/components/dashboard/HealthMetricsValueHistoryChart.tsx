@@ -59,10 +59,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipPayload) => {
         <p className="text-[#99a1af] text-sm mb-2">{label}</p>
         {payload.map((entry, index) => (
           <div key={index} className="flex items-center gap-2 mb-1 last:mb-0">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: entry.color }}
-            />
+            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
             <span className="text-gray-300 text-sm font-medium">
               {entry.name}: {entry.value.toLocaleString()}
             </span>
@@ -74,9 +71,7 @@ const CustomTooltip = ({ active, payload, label }: TooltipPayload) => {
   return null;
 };
 
-const HealthMetricsValueHistoryChartComponent: React.FC<
-  HealthMetricsValueHistoryChartProps
-> = ({
+const HealthMetricsValueHistoryChartComponent: React.FC<HealthMetricsValueHistoryChartProps> = ({
   data,
   volatilityPercent,
   lifecycleEvents = [],
@@ -101,10 +96,7 @@ const HealthMetricsValueHistoryChartComponent: React.FC<
     }));
   }, [data, hasBenchmark, benchmarkByDate]);
 
-  const yTickFormatter = useCallback(
-    (value: number) => formatLocaleNumber(value),
-    [],
-  );
+  const yTickFormatter = useCallback((value: number) => formatLocaleNumber(value), []);
 
   const renderLegend = useCallback(
     () => (
@@ -118,10 +110,7 @@ const HealthMetricsValueHistoryChartComponent: React.FC<
           <span className="text-[#8892a0] text-sm">Initial Amount</span>
         </div>
         {hasBenchmark && (
-          <div
-            className="flex items-center gap-2"
-            aria-label={`${benchmarkLabel} overlay`}
-          >
+          <div className="flex items-center gap-2" aria-label={`${benchmarkLabel} overlay`}>
             <div className="w-3 h-3 rounded-full bg-[#f5a623]" />
             <span className="text-[#f5a623] text-sm">{benchmarkLabel}</span>
           </div>
@@ -135,8 +124,7 @@ const HealthMetricsValueHistoryChartComponent: React.FC<
     Boolean(exposure) ||
     (typeof volatilityPercent === 'number' && Number.isFinite(volatilityPercent));
   const meterPercent =
-    exposure?.exposurePercent ??
-    (typeof volatilityPercent === 'number' ? volatilityPercent : 0);
+    exposure?.exposurePercent ?? (typeof volatilityPercent === 'number' ? volatilityPercent : 0);
 
   return (
     <>
@@ -212,10 +200,8 @@ const HealthMetricsValueHistoryChartComponent: React.FC<
         </ResponsiveContainer>
         <div className="mt-4 pt-4 border-t border-[#222]">
           <p className="text-[#99a1af] text-sm leading-relaxed text-center sm:text-left">
-            Track how your commitment value has changed over time compared to the
-            initial amount.
-            {hasBenchmark &&
-              ` The ${benchmarkLabel} overlay provides a reference for comparison.`}
+            Track how your commitment value has changed over time compared to the initial amount.
+            {hasBenchmark && ` The ${benchmarkLabel} overlay provides a reference for comparison.`}
           </p>
         </div>
       </div>
@@ -232,7 +218,5 @@ const HealthMetricsValueHistoryChartComponent: React.FC<
   );
 };
 
-export const HealthMetricsValueHistoryChart = React.memo(
-  HealthMetricsValueHistoryChartComponent,
-);
+export const HealthMetricsValueHistoryChart = React.memo(HealthMetricsValueHistoryChartComponent);
 HealthMetricsValueHistoryChart.displayName = 'HealthMetricsValueHistoryChart';

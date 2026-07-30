@@ -11,10 +11,7 @@ describe('useRecentlyViewed', () => {
   });
 
   it('starts empty and restores from local storage', async () => {
-    localStorage.setItem(
-      'marketplace-recently-viewed',
-      JSON.stringify(['001', '002'])
-    );
+    localStorage.setItem('marketplace-recently-viewed', JSON.stringify(['001', '002']));
 
     const { result } = renderHook(() => useRecentlyViewed());
 
@@ -28,7 +25,7 @@ describe('useRecentlyViewed', () => {
   it('filters out non-string entries from corrupted local storage', async () => {
     localStorage.setItem(
       'marketplace-recently-viewed',
-      JSON.stringify(['001', 1, { evil: true }, null, '002'])
+      JSON.stringify(['001', 1, { evil: true }, null, '002']),
     );
 
     const { result } = renderHook(() => useRecentlyViewed());

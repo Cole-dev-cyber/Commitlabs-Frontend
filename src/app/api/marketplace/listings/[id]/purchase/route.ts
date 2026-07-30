@@ -31,7 +31,13 @@ export const POST = withApiHandler(
   async (req: NextRequest, { params }, correlationId) => {
     if (!isFeatureEnabled('marketplace')) {
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'Marketplace feature is disabled.', details: { feature: 'marketplace' } } },
+        {
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Marketplace feature is disabled.',
+            details: { feature: 'marketplace' },
+          },
+        },
         { status: 404 },
       );
     }

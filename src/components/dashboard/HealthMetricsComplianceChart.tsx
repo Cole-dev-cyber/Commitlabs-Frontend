@@ -48,9 +48,9 @@ const CustomTooltip = ({ active, payload, label }: TooltipPayload) => {
   return null;
 };
 
-const HealthMetricsComplianceChartComponent: React.FC<
-  HealthMetricsComplianceChartProps
-> = ({ data }) => {
+const HealthMetricsComplianceChartComponent: React.FC<HealthMetricsComplianceChartProps> = ({
+  data,
+}) => {
   const renderLegend = useCallback(
     () => (
       <div className="flex items-center justify-center gap-2 mt-4">
@@ -82,15 +82,12 @@ const HealthMetricsComplianceChartComponent: React.FC<
       </ResponsiveContainer>
       <div className="mt-4 pt-4 border-t border-[#222]">
         <p className="text-[#99a1af] text-sm leading-relaxed">
-          Historical compliance score showing how well the commitment has adhered
-          to its rules.
+          Historical compliance score showing how well the commitment has adhered to its rules.
         </p>
       </div>
     </div>
   );
 };
 
-export const HealthMetricsComplianceChart = React.memo(
-  HealthMetricsComplianceChartComponent,
-);
+export const HealthMetricsComplianceChart = React.memo(HealthMetricsComplianceChartComponent);
 HealthMetricsComplianceChart.displayName = 'HealthMetricsComplianceChart';
