@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { notFound, useRouter } from 'next/navigation';
 import CommitmentDetailHeader from '@/components/Commitmentdetailheader';
 import CommitmentHealthMetrics from '@/components/dashboard/CommitmentHealthMetrics';
@@ -20,6 +20,8 @@ import { CommitmentStatusProvider, useCommitmentStatus } from '@/context/Commitm
 import { useShareLink } from '@/hooks/useShareLink';
 import { useToast } from '@/components/toast/ToastProvider';
 import { getAppExplorerNetwork } from './explorerNetwork';
+import { useRecentlyViewed, RECENTLY_VIEWED_COMMITMENTS_KEY } from '@/hooks/useRecentlyViewed';
+import { RecentlyViewedCommitmentsRail } from '@/components/RecentlyViewedCommitmentsRail';
 
 // Mock Commitments
 const MOCK_COMMITMENTS: Record<

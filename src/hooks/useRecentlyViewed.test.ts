@@ -2,7 +2,7 @@
 
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useRecentlyViewed } from '@/hooks/useRecentlyViewed';
+import { useRecentlyViewed, RECENTLY_VIEWED_COMMITMENTS_KEY } from '@/hooks/useRecentlyViewed';
 
 describe('useRecentlyViewed', () => {
   beforeEach(() => {
@@ -95,5 +95,33 @@ describe('useRecentlyViewed', () => {
 
     expect(result.current.recentIds).toHaveLength(0);
     expect(localStorage.getItem('marketplace-recently-viewed')).toBe('[]');
+  });
+
+  it('tracks a custom storage key independently of the default marketplace key', async () => {
+    localStorage.setItem('marketplace-recently-viewed', JSON.stringify(['listing-1']));
+
+    const { result } = renderHook(() =>
+      useRecentlyViewed(5, RECENTLY_VIEWED_COMMITMENTS_KEY)
+    );
+
+    await vi.waitFor(() => {
+      expect(result.current.isHydrated).toBe(true);
+    });
+
+    // Unaffected by the unrelated marketplace key already in storage.
+    expect(result.current.recentIds).toEqual([]);
+
+    act(() => {
+      result.current.addView('commitment-1');
+    });
+
+    expect(result.current.recentIds).toEqual(['commitment-1']);
+    expect(localStorage.getItem(RECENTLY_VIEWED_COMMITMENTS_KEY)).toBe(
+      JSON.stringify(['commitment-1'])
+    );
+    // The unrelated marketplace key is untouched.
+    expect(localStorage.getItem('marketplace-recently-viewed')).toBe(
+      JSON.stringify(['listing-1'])
+    );
   });
 });

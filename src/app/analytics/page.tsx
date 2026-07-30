@@ -31,6 +31,29 @@ import { KPICard } from '@/components/KPICard';
 import { useWallet } from '@/hooks/useWallet';
 import AnalyticsTrendLineChart from '@/components/analytics/AnalyticsTrendLineChart';
 import AnalyticsTrendBarChart from '@/components/analytics/AnalyticsTrendBarChart';
+import { usePageTour, type PageTourStep } from '@/hooks/usePageTour';
+import { GuidedTour } from '@/components/onboarding/GuidedTour';
+
+const ANALYTICS_TOUR_STEPS: PageTourStep[] = [
+  {
+    targetSelector: '[data-testid="analytics-view-toggle"]',
+    title: 'Switch views',
+    content: 'Toggle between "My Stats" (your own commitments) and "Protocol" (protocol-wide) analytics.',
+    position: 'bottom',
+  },
+  {
+    targetSelector: '[data-testid="analytics-kpi-section"]',
+    title: 'Key metrics',
+    content: 'These cards summarize your commitment activity at a glance -- totals, active count, value committed, and fees earned.',
+    position: 'bottom',
+  },
+  {
+    targetSelector: '[data-testid="analytics-charts-section"]',
+    title: 'Trend charts',
+    content: 'Track how your compliance score and earned fees have moved over recent periods.',
+    position: 'top',
+  },
+];
 
 // ============================================================================
 // TYPES
@@ -137,6 +160,7 @@ function ViewToggle({ value, onChange, disabled }: ViewToggleProps) {
     <div
       role="group"
       aria-label="Analytics view"
+      data-testid="analytics-view-toggle"
       className="inline-flex rounded-lg overflow-hidden border border-[#333] bg-[#111]"
     >
       {(['user', 'protocol'] as ViewMode[]).map((mode) => {
@@ -253,7 +277,7 @@ function UserAnalyticsView({ data, state, onRetry, hasWallet }: UserAnalyticsVie
   return (
     <div className="space-y-6">
       {/* KPI Cards */}
-      <section aria-label="Your key metrics">
+      <section aria-label="Your key metrics" data-testid="analytics-kpi-section">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <KPICard
             label="Total Commitments"
@@ -309,7 +333,7 @@ function UserAnalyticsView({ data, state, onRetry, hasWallet }: UserAnalyticsVie
       </section>
 
       {/* Trend Charts */}
-      <section aria-label="Your trend charts">
+      <section aria-label="Your trend charts" data-testid="analytics-charts-section">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <AnalyticsTrendLineChart
             title="Compliance Score Trend"
@@ -483,6 +507,17 @@ export default function AnalyticsPage() {
   const [protocolData, setProtocolData] = useState<ProtocolAnalyticsData | null>(null);
   const [protocolState, setProtocolState] = useState<LoadState>('idle');
 
+  const {
+    isActive: isTourActive,
+    currentStepIndex: tourStepIndex,
+    currentStep: tourStep,
+    totalSteps: tourTotalSteps,
+    startTour,
+    nextStep: nextTourStep,
+    prevStep: prevTourStep,
+    skipTour,
+  } = usePageTour(ANALYTICS_TOUR_STEPS, 'commitlabs:seen-analytics-tour');
+
   // ─── Fetch user analytics ─────────────────────────────────────────────────
   const fetchUserAnalytics = useCallback(async () => {
     if (!address) return;
@@ -533,10 +568,9 @@ export default function AnalyticsPage() {
     setView(mode);
   };
 
-  const isAnyLoading = userState === 'loading' || protocolState === 'loading';
-
   return (
     <main id="main-content" className="min-h-screen bg-[#0a0a0a]">
+      <KeyboardShortcutsOverlay />
       {/* Header */}
       <header className="sticky top-0 z-10 bg-[#0a0a0a]/90 backdrop-blur-sm border-b border-[#1a1a1a]">
         <div className="px-6 sm:px-10 lg:px-16 py-4 flex items-center justify-between gap-4 flex-wrap">
@@ -555,6 +589,16 @@ export default function AnalyticsPage() {
           <ViewToggle value={view} onChange={handleViewChange} disabled={false} />
         </div>
       </header>
+
+      <GuidedTour
+        isActive={isTourActive}
+        currentStepIndex={tourStepIndex}
+        currentStepConfig={tourStep}
+        totalSteps={tourTotalSteps}
+        onNext={nextTourStep}
+        onBack={prevTourStep}
+        onSkip={skipTour}
+      />
 
       {/* Body */}
       <div className="px-6 sm:px-10 lg:px-16 py-8 space-y-6">
