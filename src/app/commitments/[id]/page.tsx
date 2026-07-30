@@ -237,7 +237,7 @@ export default function CommitmentDetailPage({
                         />
                     </div>
 
-                    <DisputeStatusTracker dispute={dispute} />
+                    <DisputeStatusTracker dispute={dispute} commitmentId={commitment.id} />
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
                         <div className="lg:col-span-2 space-y-8">
