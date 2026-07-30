@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import ScrollToTopButton from '@/components/landing-page/ui/ScrollToTop';
 import { SITE_URL } from '@/lib/site';
+import { CommandPalette, CommandPaletteProvider } from '@/components/CommandPalette';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -93,9 +94,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <MotionProvider>
               <ToastProvider>
                 <NetworkMismatchBanner />
-                <AppShellConnectionStatus>{children}</AppShellConnectionStatus>
+                <CommandPaletteProvider>
+                  <AppShellConnectionStatus>{children}</AppShellConnectionStatus>
+                  <CommandPalette />
+                </CommandPaletteProvider>
                 <ScrollToTopButton />
-                <CommandPaletteProvider />
               </ToastProvider>
             </MotionProvider>
           </WalletProvider>

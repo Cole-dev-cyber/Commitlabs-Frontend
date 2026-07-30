@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { notFound, useRouter } from 'next/navigation';
 import CommitmentDetailHeader from '@/components/Commitmentdetailheader';
 import CommitmentHealthMetrics from '@/components/dashboard/CommitmentHealthMetrics';
@@ -22,6 +22,8 @@ import { useToast } from '@/components/toast/ToastProvider';
 import { getAppExplorerNetwork } from './explorerNetwork';
 import { useRecentlyViewed, RECENTLY_VIEWED_COMMITMENTS_KEY } from '@/hooks/useRecentlyViewed';
 import { RecentlyViewedCommitmentsRail } from '@/components/RecentlyViewedCommitmentsRail';
+import { useRegisterCommands } from '@/components/CommandPalette';
+import { buildCommitmentScopedCommands } from '@/components/CommandPalette/scopedActions';
 
 // Mock Commitments
 const MOCK_COMMITMENTS: Record<
@@ -243,6 +245,19 @@ export default function CommitmentDetailPage({ params }: { params: { id: string 
   const handleSettle = useCallback(() => {
     showSuccess({ title: 'Coming Soon', description: 'Settlement is not yet available.' });
   }, [showSuccess]);
+
+  const scopedCommands = useMemo(
+    () =>
+      buildCommitmentScopedCommands({
+        commitmentId: commitment.id,
+        canSettle: commitmentStatusOverride !== 'Disputed',
+        canEarlyExit: commitment.canEarlyExit,
+        onSettle: handleSettle,
+        onEarlyExit: handleEarlyExit,
+      }),
+    [commitment.id, commitment.canEarlyExit, commitmentStatusOverride, handleSettle, handleEarlyExit],
+  );
+  useRegisterCommands(scopedCommands);
 
   return (
     <CommitmentStatusProvider commitmentId={commitment.id}>
