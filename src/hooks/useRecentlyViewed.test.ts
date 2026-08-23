@@ -100,9 +100,7 @@ describe('useRecentlyViewed', () => {
   it('tracks a custom storage key independently of the default marketplace key', async () => {
     localStorage.setItem('marketplace-recently-viewed', JSON.stringify(['listing-1']));
 
-    const { result } = renderHook(() =>
-      useRecentlyViewed(5, RECENTLY_VIEWED_COMMITMENTS_KEY)
-    );
+    const { result } = renderHook(() => useRecentlyViewed(5, RECENTLY_VIEWED_COMMITMENTS_KEY));
 
     await vi.waitFor(() => {
       expect(result.current.isHydrated).toBe(true);
@@ -117,11 +115,9 @@ describe('useRecentlyViewed', () => {
 
     expect(result.current.recentIds).toEqual(['commitment-1']);
     expect(localStorage.getItem(RECENTLY_VIEWED_COMMITMENTS_KEY)).toBe(
-      JSON.stringify(['commitment-1'])
+      JSON.stringify(['commitment-1']),
     );
     // The unrelated marketplace key is untouched.
-    expect(localStorage.getItem('marketplace-recently-viewed')).toBe(
-      JSON.stringify(['listing-1'])
-    );
+    expect(localStorage.getItem('marketplace-recently-viewed')).toBe(JSON.stringify(['listing-1']));
   });
 });

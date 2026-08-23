@@ -45,7 +45,9 @@ export function SoldHistoryTabs({
       ) : (
         <div id="marketplace-panel-sold" role="tabpanel">
           {sold.length === 0 ? (
-            <p className="rounded-lg border border-white/10 p-6 text-white/60">No sold listings yet.</p>
+            <p className="rounded-lg border border-white/10 p-6 text-white/60">
+              No sold listings yet.
+            </p>
           ) : (
             <ul className="grid gap-3 sm:grid-cols-2">
               {sold.map((listing) => (

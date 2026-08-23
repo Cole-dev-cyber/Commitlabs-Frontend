@@ -27,7 +27,11 @@ export function SavedListingsRail({
       <ul className="flex gap-3 overflow-x-auto">
         {saved.map((listing) => (
           <li key={listing.id} className="min-w-44 rounded-lg bg-white/5 p-3 text-sm text-white">
-            <button type="button" onClick={() => onSelect?.(listing.id)} className="block text-left">
+            <button
+              type="button"
+              onClick={() => onSelect?.(listing.id)}
+              className="block text-left"
+            >
               <span className="block font-medium">{listing.title}</span>
               <span className="block text-white/60">{listing.price}</span>
               {listing.status && listing.status !== 'Active' && (

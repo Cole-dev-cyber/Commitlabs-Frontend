@@ -8,10 +8,10 @@ real-time SSE-powered mode that live-updates the dispute stage.
 
 ## Props
 
-| Prop | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `dispute` | `DisputeInfo \| null` | Yes | — | The current dispute state. Pass `null` when no dispute is active — the stepper renders an idle "no active dispute" placeholder. |
-| `commitmentId` | `string` | No | `undefined` | When provided, the component subscribes to a Server-Sent Events (SSE) stream for this commitment and overlays live dispute-stage updates on top of the `dispute` prop. Also renders the live-connection status badge (see below). When omitted, the component operates purely from the `dispute` prop. |
+| Prop           | Type                  | Required | Default     | Description                                                                                                                                                                                                                                                                                            |
+| -------------- | --------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dispute`      | `DisputeInfo \| null` | Yes      | —           | The current dispute state. Pass `null` when no dispute is active — the stepper renders an idle "no active dispute" placeholder.                                                                                                                                                                        |
+| `commitmentId` | `string`              | No       | `undefined` | When provided, the component subscribes to a Server-Sent Events (SSE) stream for this commitment and overlays live dispute-stage updates on top of the `dispute` prop. Also renders the live-connection status badge (see below). When omitted, the component operates purely from the `dispute` prop. |
 
 ### `DisputeInfo`
 
@@ -48,10 +48,10 @@ possible states:
 
 ### States
 
-| State | Visual indicator | Meaning |
-|-------|-----------------|---------|
-| **Live** | Pulsing green dot + `"Live"` | The SSE connection is healthy and the component is receiving real-time updates. The displayed dispute information reflects the latest on-chain state. |
-| **Connecting…** | Solid yellow dot + `"Connecting…"` | The initial SSE handshake is in progress. This is shown on first mount before the first event is received. |
+| State             | Visual indicator                     | Meaning                                                                                                                                                                                                                       |
+| ----------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Live**          | Pulsing green dot + `"Live"`         | The SSE connection is healthy and the component is receiving real-time updates. The displayed dispute information reflects the latest on-chain state.                                                                         |
+| **Connecting…**   | Solid yellow dot + `"Connecting…"`   | The initial SSE handshake is in progress. This is shown on first mount before the first event is received.                                                                                                                    |
 | **Reconnecting…** | Solid orange dot + `"Reconnecting…"` | The SSE connection was lost and the hook is attempting to re-establish it using exponential backoff (1 s → 2 s → 4 s → … up to 30 s). The component continues to display the last known dispute data from the `dispute` prop. |
 
 ### How it works
@@ -87,11 +87,11 @@ current task. The `aria-label` on the badge is
 
 ## Data Sources
 
-| Source | Used when | Priority |
-|--------|-----------|----------|
-| `dispute` prop | Always | Lowest — base data for the stepper |
-| SSE stream (`commitmentId` supplied) | `commitmentId` is truthy | Higher — live data overlays the prop |
-| Mock / idle state | `dispute` is `null` | Shows the "No active dispute" placeholder |
+| Source                               | Used when                | Priority                                  |
+| ------------------------------------ | ------------------------ | ----------------------------------------- |
+| `dispute` prop                       | Always                   | Lowest — base data for the stepper        |
+| SSE stream (`commitmentId` supplied) | `commitmentId` is truthy | Higher — live data overlays the prop      |
+| Mock / idle state                    | `dispute` is `null`      | Shows the "No active dispute" placeholder |
 
 The component merges these sources with a simple rule: **live SSE data always
 takes precedence over the static `dispute` prop**. When the SSE stream has not

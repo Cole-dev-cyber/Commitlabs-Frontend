@@ -24,7 +24,7 @@ describe('RecentlyViewedCommitmentsRail', () => {
           { id: '2', type: 'Safe', durationDays: 30 },
           { id: '3', type: 'Aggressive', durationDays: 90 },
         ]}
-      />
+      />,
     );
 
     const rail = screen.getByTestId('recently-viewed-commitments-rail');
@@ -41,7 +41,7 @@ describe('RecentlyViewedCommitmentsRail', () => {
 
   it('exposes an accessible nav label', () => {
     render(
-      <RecentlyViewedCommitmentsRail entries={[{ id: '1', type: 'Balanced', durationDays: 60 }]} />
+      <RecentlyViewedCommitmentsRail entries={[{ id: '1', type: 'Balanced', durationDays: 60 }]} />,
     );
     expect(screen.getByRole('navigation', { name: 'Recently viewed commitments' })).toBeTruthy();
   });

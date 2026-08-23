@@ -55,7 +55,9 @@ export function useMarketplaceAlerts(
   const seenRef = useRef(new Set<string>());
   const [mutedIds, setMutedIds] = useState<Set<string>>(() => {
     try {
-      return new Set(JSON.parse(localStorage.getItem('commitlabs:marketplace-alert-mutes') ?? '[]'));
+      return new Set(
+        JSON.parse(localStorage.getItem('commitlabs:marketplace-alert-mutes') ?? '[]'),
+      );
     } catch {
       return new Set();
     }

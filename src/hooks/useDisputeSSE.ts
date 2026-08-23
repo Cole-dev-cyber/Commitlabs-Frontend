@@ -48,9 +48,7 @@ export function useDisputeSSE(commitmentId: string): UseDisputeSSEReturn {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    setConnectionState(
-      reconnectAttemptRef.current === 0 ? 'connecting' : 'reconnecting',
-    );
+    setConnectionState(reconnectAttemptRef.current === 0 ? 'connecting' : 'reconnecting');
 
     const url = `/api/commitments/${encodeURIComponent(commitmentId)}/events`;
 
@@ -147,7 +145,8 @@ export function useDisputeSSE(commitmentId: string): UseDisputeSSEReturn {
         // Attempt reconnection with exponential backoff
         if (isMountedRef.current) {
           const delay = Math.min(
-            RECONNECT_BASE_DELAY_MS * Math.pow(RECONNECT_BACKOFF_FACTOR, reconnectAttemptRef.current),
+            RECONNECT_BASE_DELAY_MS *
+              Math.pow(RECONNECT_BACKOFF_FACTOR, reconnectAttemptRef.current),
             RECONNECT_MAX_DELAY_MS,
           );
 

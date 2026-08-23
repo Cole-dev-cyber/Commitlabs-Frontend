@@ -12,9 +12,11 @@ export function routeFileToOpenApiPath(routeFile: string): string {
     return '';
   }
 
-  const segments = normalized.slice(prefix.length, -(`/${ROUTE_FILE}`).length).split('/');
+  const segments = normalized.slice(prefix.length, -`/${ROUTE_FILE}`.length).split('/');
   const apiPath = segments
-    .map((segment) => (segment.startsWith('[') && segment.endsWith(']') ? `{${segment.slice(1, -1)}}` : segment))
+    .map((segment) =>
+      segment.startsWith('[') && segment.endsWith(']') ? `{${segment.slice(1, -1)}}` : segment,
+    )
     .join('/');
 
   return `/api/${apiPath}`;
@@ -46,7 +48,13 @@ export function discoverApiRouteFiles(apiRoot: string, rootDir = apiRoot): strin
 export function parseOpenApiPaths(openApiContent: string): Set<string> {
   const parsed = yaml.load(openApiContent) as Record<string, unknown>;
   const paths = new Set<string>();
-  if (parsed && typeof parsed === 'object' && parsed.paths && typeof parsed.paths === 'object' && parsed.paths !== null) {
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    parsed.paths &&
+    typeof parsed.paths === 'object' &&
+    parsed.paths !== null
+  ) {
     for (const key of Object.keys(parsed.paths)) {
       if (key.startsWith('/api/')) {
         paths.add(key);
@@ -56,7 +64,10 @@ export function parseOpenApiPaths(openApiContent: string): Set<string> {
   return paths;
 }
 
-export function findUndocumentedRoutes(routeFiles: string[], documentedPaths: Set<string>): string[] {
+export function findUndocumentedRoutes(
+  routeFiles: string[],
+  documentedPaths: Set<string>,
+): string[] {
   return routeFiles
     .map((file) => routeFileToOpenApiPath(`src/app/api/${file}`))
     .filter((path) => path.length > 0 && !documentedPaths.has(path))

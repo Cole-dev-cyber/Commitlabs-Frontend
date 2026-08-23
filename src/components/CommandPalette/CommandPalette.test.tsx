@@ -6,7 +6,10 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CommandPalette } from '@/components/CommandPalette/CommandPalette';
-import { CommandPaletteProvider, useCommandPalette } from '@/components/CommandPalette/CommandPaletteProvider';
+import {
+  CommandPaletteProvider,
+  useCommandPalette,
+} from '@/components/CommandPalette/CommandPaletteProvider';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -27,7 +30,7 @@ function renderOpenPalette() {
       <OpenOnMount>
         <CommandPalette />
       </OpenOnMount>
-    </CommandPaletteProvider>
+    </CommandPaletteProvider>,
   );
 }
 
@@ -40,7 +43,7 @@ describe('CommandPalette', () => {
     render(
       <CommandPaletteProvider>
         <CommandPalette />
-      </CommandPaletteProvider>
+      </CommandPaletteProvider>,
     );
     expect(screen.queryByRole('combobox')).toBeNull();
   });
@@ -84,7 +87,7 @@ describe('CommandPalette', () => {
         <OpenOnMount>
           <WithCustomCommand />
         </OpenOnMount>
-      </CommandPaletteProvider>
+      </CommandPaletteProvider>,
     );
 
     const input = screen.getByRole('combobox');
@@ -112,7 +115,7 @@ describe('CommandPalette', () => {
         <OpenOnMount>
           <WithCustomCommand />
         </OpenOnMount>
-      </CommandPaletteProvider>
+      </CommandPaletteProvider>,
     );
 
     fireEvent.click(screen.getByText('Clickable action'));

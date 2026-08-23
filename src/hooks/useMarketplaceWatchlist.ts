@@ -6,7 +6,9 @@ export const MARKETPLACE_WATCHLIST_KEY = 'commitlabs:marketplace-watchlist';
 
 function readWatchlist(): string[] {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(MARKETPLACE_WATCHLIST_KEY) ?? '[]');
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(MARKETPLACE_WATCHLIST_KEY) ?? '[]',
+    );
     return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
   } catch {
     return [];

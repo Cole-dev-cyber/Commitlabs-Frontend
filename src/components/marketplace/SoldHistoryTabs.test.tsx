@@ -14,7 +14,10 @@ describe('SoldHistoryTabs', () => {
     );
 
     fireEvent.click(screen.getByRole('tab', { name: 'Sold history' }));
-    expect(screen.getByRole('tab', { name: 'Sold history' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Sold history' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     expect(screen.getByText('Sale price: $100')).toBeInTheDocument();
   });
 

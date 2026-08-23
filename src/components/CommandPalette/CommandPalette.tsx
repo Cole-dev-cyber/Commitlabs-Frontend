@@ -75,7 +75,9 @@ export function CommandPalette() {
         role="combobox"
         aria-expanded={isOpen}
         aria-controls="command-palette-list"
-        aria-activedescendant={filtered[highlightedIndex] ? `command-${filtered[highlightedIndex].id}` : undefined}
+        aria-activedescendant={
+          filtered[highlightedIndex] ? `command-${filtered[highlightedIndex].id}` : undefined
+        }
         placeholder="Type a command…"
         value={query}
         onChange={(event) => setQuery(event.target.value)}

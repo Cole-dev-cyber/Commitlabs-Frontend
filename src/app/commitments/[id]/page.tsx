@@ -255,7 +255,13 @@ export default function CommitmentDetailPage({ params }: { params: { id: string 
         onSettle: handleSettle,
         onEarlyExit: handleEarlyExit,
       }),
-    [commitment.id, commitment.canEarlyExit, commitmentStatusOverride, handleSettle, handleEarlyExit],
+    [
+      commitment.id,
+      commitment.canEarlyExit,
+      commitmentStatusOverride,
+      handleSettle,
+      handleEarlyExit,
+    ],
   );
   useRegisterCommands(scopedCommands);
 

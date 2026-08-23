@@ -27,9 +27,14 @@ function SomePage() {
 
   const commands: CommandItem[] = useMemo(
     () => [
-      { id: 'page:some-action', label: 'Do the thing', group: 'This Page', run: () => doTheThing() },
+      {
+        id: 'page:some-action',
+        label: 'Do the thing',
+        group: 'This Page',
+        run: () => doTheThing(),
+      },
     ],
-    []
+    [],
   );
 
   useRegisterCommands(commands);

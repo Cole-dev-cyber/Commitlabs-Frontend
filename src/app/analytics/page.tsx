@@ -38,13 +38,15 @@ const ANALYTICS_TOUR_STEPS: PageTourStep[] = [
   {
     targetSelector: '[data-testid="analytics-view-toggle"]',
     title: 'Switch views',
-    content: 'Toggle between "My Stats" (your own commitments) and "Protocol" (protocol-wide) analytics.',
+    content:
+      'Toggle between "My Stats" (your own commitments) and "Protocol" (protocol-wide) analytics.',
     position: 'bottom',
   },
   {
     targetSelector: '[data-testid="analytics-kpi-section"]',
     title: 'Key metrics',
-    content: 'These cards summarize your commitment activity at a glance -- totals, active count, value committed, and fees earned.',
+    content:
+      'These cards summarize your commitment activity at a glance -- totals, active count, value committed, and fees earned.',
     position: 'bottom',
   },
   {

@@ -130,7 +130,8 @@ export default function DisputeStatusTracker({
               className="inline-block h-2 w-2 rounded-full"
               style={{
                 backgroundColor: badge.dot,
-                animation: connectionState === 'live' ? 'pulse-dot 2s ease-in-out infinite' : undefined,
+                animation:
+                  connectionState === 'live' ? 'pulse-dot 2s ease-in-out infinite' : undefined,
               }}
             />
             {badge.label}
@@ -142,10 +143,7 @@ export default function DisputeStatusTracker({
       {dispute ? (
         <div className="space-y-4">
           {/* Step indicators */}
-          <ol
-            className="flex items-center w-full"
-            aria-label="Dispute stages"
-          >
+          <ol className="flex items-center w-full" aria-label="Dispute stages">
             {STAGES.map((stage, idx) => {
               const isCompleted = idx < activeIdx;
               const isCurrent = idx === activeIdx;
@@ -282,8 +280,13 @@ export default function DisputeStatusTracker({
       {/* Inline keyframes for the pulse animation */}
       <style jsx>{`
         @keyframes pulse-dot {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
+          0%,
+          100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.4;
+          }
         }
       `}</style>
     </section>

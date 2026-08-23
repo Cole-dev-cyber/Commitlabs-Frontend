@@ -2,10 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import {
-  MARKETPLACE_WATCHLIST_KEY,
-  useMarketplaceWatchlist,
-} from './useMarketplaceWatchlist';
+import { MARKETPLACE_WATCHLIST_KEY, useMarketplaceWatchlist } from './useMarketplaceWatchlist';
 
 describe('useMarketplaceWatchlist', () => {
   it('restores and persists saved listing ids', () => {

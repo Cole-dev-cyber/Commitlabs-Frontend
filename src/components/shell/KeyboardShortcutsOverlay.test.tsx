@@ -32,7 +32,7 @@ describe('KeyboardShortcutsOverlay', () => {
       <>
         <input aria-label="Some field" />
         <KeyboardShortcutsOverlay />
-      </>
+      </>,
     );
 
     const input = screen.getByLabelText('Some field');
@@ -47,7 +47,7 @@ describe('KeyboardShortcutsOverlay', () => {
       <>
         <textarea aria-label="Notes" />
         <KeyboardShortcutsOverlay />
-      </>
+      </>,
     );
 
     const textarea = screen.getByLabelText('Notes');
@@ -62,7 +62,7 @@ describe('KeyboardShortcutsOverlay', () => {
       <>
         <div contentEditable data-testid="editable" />
         <KeyboardShortcutsOverlay />
-      </>
+      </>,
     );
 
     const editable = screen.getByTestId('editable');
@@ -94,7 +94,7 @@ describe('KeyboardShortcutsOverlay', () => {
       <>
         <button data-testid="trigger">Trigger</button>
         <KeyboardShortcutsOverlay />
-      </>
+      </>,
     );
 
     const trigger = screen.getByTestId('trigger');

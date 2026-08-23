@@ -32,7 +32,7 @@ describe('useRegisterCommands', () => {
   it('includes the static navigation commands by default', () => {
     const { result } = renderHook(() => useCommandPalette(), { wrapper });
     expect(labelsOf(result.current.commands)).toEqual(
-      expect.arrayContaining(['Go to Analytics', 'Create a commitment'])
+      expect.arrayContaining(['Go to Analytics', 'Create a commitment']),
     );
   });
 
@@ -45,7 +45,7 @@ describe('useRegisterCommands', () => {
         useRegisterCommands([command]);
         return palette;
       },
-      { wrapper }
+      { wrapper },
     );
 
     expect(labelsOf(result.current.commands)).toContain('Do the foo thing');
@@ -60,7 +60,7 @@ describe('useRegisterCommands', () => {
         useRegisterCommands([command]);
         return palette;
       },
-      { wrapper }
+      { wrapper },
     );
 
     expect(labelsOf(result.current.commands)).toContain('Do the bar thing');
