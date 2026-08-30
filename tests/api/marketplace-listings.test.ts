@@ -18,6 +18,15 @@ vi.mock('@/lib/backend/services/marketplace', () => ({
   getMarketplaceSortKeys: vi.fn(() => ['price', 'yield', 'compliance']),
 }));
 
+vi.mock('@/lib/backend/idempotency', () => ({
+  idempotencyService: {
+    getRecord: vi.fn(),
+    start: vi.fn(),
+    complete: vi.fn(),
+    fail: vi.fn(),
+  },
+}));
+
 vi.mock('@/lib/backend/jsonBodyLimit', () => ({
   parseJsonWithLimit: vi.fn(),
   JSON_BODY_LIMITS: { marketplaceListingsCreate: 1024 * 100 },
@@ -45,15 +54,16 @@ import { checkRateLimit } from '@/lib/backend/rateLimit';
 import { assertMutationCsrf } from '@/lib/backend/csrf';
 import { listMarketplaceListings, marketplaceService } from '@/lib/backend/services/marketplace';
 import { parseJsonWithLimit } from '@/lib/backend/jsonBodyLimit';
-import { verifyAuth } from '@/lib/backend/requireAuth';
-import { CsrfValidationError, UnauthorizedError } from '@/lib/backend/errors';
+import { idempotencyService } from '@/lib/backend/idempotency';
+import { CsrfValidationError } from '@/lib/backend/errors';
 
 const mockedCheckRateLimit = vi.mocked(checkRateLimit);
 const mockedAssertMutationCsrf = vi.mocked(assertMutationCsrf);
 const mockedListMarketplaceListings = vi.mocked(listMarketplaceListings);
 const mockedCreateListing = vi.mocked(marketplaceService.createListing);
 const mockedParseJsonWithLimit = vi.mocked(parseJsonWithLimit);
-const mockedVerifyAuth = vi.mocked(verifyAuth);
+const mockedIdempotencyGetRecord = vi.mocked(idempotencyService.getRecord);
+const mockedIdempotencyStart = vi.mocked(idempotencyService.start);
 
 const mockGET = GET as (
   req: NextRequest,
@@ -82,6 +92,8 @@ describe('GET /api/marketplace/listings', () => {
     vi.clearAllMocks();
     mockedCheckRateLimit.mockResolvedValue(true);
     mockedListMarketplaceListings.mockResolvedValue([SAMPLE_LISTING] as any);
+    mockedIdempotencyGetRecord.mockResolvedValue(null);
+    mockedIdempotencyStart.mockResolvedValue(true);
   });
 
   it('uses getClientIp for per-IP rate limiting', async () => {
@@ -146,6 +158,8 @@ describe('POST /api/marketplace/listings', () => {
     mockedCheckRateLimit.mockResolvedValue(true);
     mockedVerifyAuth.mockReturnValue({ address: SELLER_ADDRESS, isAdmin: false });
     mockedParseJsonWithLimit.mockResolvedValue(LISTING_BODY);
+    mockedIdempotencyGetRecord.mockResolvedValue(null);
+    mockedIdempotencyStart.mockResolvedValue(true);
     mockedCreateListing.mockResolvedValue({
       id: 'lst_1',
       ...SERVICE_LISTING_BODY,
@@ -331,5 +345,54 @@ describe('POST /api/marketplace/listings', () => {
     expect(result.status).toBe(400);
     expect(result.data.error.code).toBe('VALIDATION_ERROR');
     expect(mockedCreateListing).not.toHaveBeenCalled();
+  });
+
+  it('returns the cached response for a completed idempotency key', async () => {
+    mockedAssertMutationCsrf.mockImplementation(() => {});
+    mockedIdempotencyGetRecord.mockResolvedValue({
+      key: 'listing-key',
+      status: 'COMPLETED',
+      response: { listing: { id: 'lst_replay', status: 'Active' } },
+      statusCode: 201,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 86400000,
+    });
+
+    const response = await mockPOST(
+      createMockRequest('http://localhost:3000/api/marketplace/listings', {
+        method: 'POST',
+        headers: { 'idempotency-key': 'listing-key' },
+        body: LISTING_BODY,
+      }),
+      createMockRouteContext(),
+    );
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(201);
+    expect(result.data.data.listing.id).toBe('lst_replay');
+    expect(mockedCreateListing).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate in-flight create requests using the same idempotency key', async () => {
+    mockedAssertMutationCsrf.mockImplementation(() => {});
+    mockedIdempotencyGetRecord.mockResolvedValue({
+      key: 'listing-key',
+      status: 'STARTED',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 86400000,
+    });
+
+    const response = await mockPOST(
+      createMockRequest('http://localhost:3000/api/marketplace/listings', {
+        method: 'POST',
+        headers: { 'idempotency-key': 'listing-key' },
+        body: LISTING_BODY,
+      }),
+      createMockRouteContext(),
+    );
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(429);
+    expect(result.data.error.code).toBe('TOO_MANY_REQUESTS');
   });
 });

@@ -12,14 +12,7 @@ import {
 import { getClientIp } from '@/lib/backend/getClientIp';
 import { idempotencyService } from '@/lib/backend/idempotency';
 import { isFeatureEnabled } from '@/lib/backend/config';
-import {
-  assertWalletMatchesSession,
-  IdempotencyKeySchema,
-  MarketplacePurchaseBoundarySchema,
-  type MarketplacePurchaseResponse,
-  parseMarketplaceListingId,
-  validateMarketplaceListingSnapshot,
-} from '@/lib/backend/marketplaceBoundary';
+import { idempotencyService } from '@/lib/backend/idempotency';
 import { transferOwnership } from '@/lib/backend/services/contracts';
 import { marketplaceService } from '@/lib/backend/services/marketplace';
 import { checkRateLimit, getRateLimitWindowSeconds } from '@/lib/backend/rateLimit';
@@ -93,33 +86,25 @@ export const POST = withApiHandler(
     const buyerAddress = validation.data.buyerAddress;
     assertWalletMatchesSession(auth.address, buyerAddress, 'buyerAddress');
 
-    const idempotencyKey = getScopedIdempotencyKey(req, id, buyerAddress);
+    const idempotencyKey = req.headers.get('idempotency-key');
     if (idempotencyKey) {
-      const record =
-        await idempotencyService.getRecord<MarketplacePurchaseResponse>(idempotencyKey);
-      if (record?.status === 'COMPLETED' && record.response) {
-        return ok(record.response, { fromCache: true }, record.statusCode ?? 200, correlationId);
+      const record = await idempotencyService.getRecord(idempotencyKey);
+      if (record) {
+        if (record.status === 'COMPLETED') {
+          return ok(record.response, undefined, record.statusCode, correlationId);
+        }
+        if (record.status === 'STARTED') {
+          throw new ConflictError('A request with this Idempotency-Key is currently processing');
+        }
       }
-      if (record?.status === 'STARTED') {
-        throw new ConflictError('A purchase with this Idempotency-Key is already processing.', {
-          listingId: id,
-        });
-      }
-      const started = await idempotencyService.start(idempotencyKey);
-      if (!started) {
-        throw new ConflictError('A purchase with this Idempotency-Key is already processing.', {
-          listingId: id,
-        });
-      }
+      await idempotencyService.start(idempotencyKey);
     }
 
     try {
-      const rawListing = await marketplaceService.getListing(id);
-      if (!rawListing) {
+      const listing = await marketplaceService.getListing(id);
+      if (!listing) {
         throw new NotFoundError('Listing', { listingId: id });
       }
-
-      const listing = validateMarketplaceListingSnapshot(rawListing, id);
 
       if (listing.status !== 'Active') {
         throw new ConflictError('Only active listings can be purchased', {
@@ -139,26 +124,15 @@ export const POST = withApiHandler(
       const toAddress = buyerAddress;
 
       const transfer = await transferOwnership({ commitmentId, fromAddress, toAddress });
+      const purchasedListing = await marketplaceService.completePurchase(id, buyerAddress);
 
-      const purchasedListing = validateMarketplaceListingSnapshot(
-        await marketplaceService.completePurchase(id, buyerAddress),
-        id,
-      );
-
-      if (purchasedListing.status !== 'Sold') {
-        throw new ValidationError('Marketplace purchase response did not mark the listing sold.', {
-          listingId: id,
-          currentStatus: purchasedListing.status,
-        });
-      }
-
-      const responseData: MarketplacePurchaseResponse = {
+      const responseData = {
         listingId: purchasedListing.id,
         commitmentId,
         buyerAddress,
         sellerAddress: fromAddress,
+        txHash: transfer.txHash,
         purchasedAt: purchasedListing.updatedAt,
-        ...(transfer.txHash ? { txHash: transfer.txHash } : {}),
       };
 
       if (idempotencyKey) {

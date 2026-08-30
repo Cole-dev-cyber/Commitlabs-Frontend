@@ -5,6 +5,7 @@ import { assertMutationCsrf } from '@/lib/backend/csrf';
 import { createCorsOptionsHandler, type CorsRoutePolicy } from '@/lib/backend/cors';
 import { TooManyRequestsError, ValidationError } from '@/lib/backend/errors';
 import { getClientIp } from '@/lib/backend/getClientIp';
+import { idempotencyService } from '@/lib/backend/idempotency';
 import { parseJsonWithLimit, JSON_BODY_LIMITS } from '@/lib/backend/jsonBodyLimit';
 import {
   assertWalletMatchesSession,
@@ -198,23 +199,53 @@ export const POST = withApiHandler(
       );
     }
 
-    const auth = verifyAuth(req);
-
-    const body = await parseJsonWithLimit(req, {
-      limitBytes: JSON_BODY_LIMITS.marketplaceListingsCreate,
-    });
-
-    const validation = MarketplaceCreateListingBoundarySchema.safeParse(body);
-    if (!validation.success) {
-      throw new ValidationError('Invalid listing request', validation.error.issues);
+    const idempotencyKey = req.headers.get('idempotency-key');
+    if (idempotencyKey) {
+      const record = await idempotencyService.getRecord(idempotencyKey);
+      if (record) {
+        if (record.status === 'COMPLETED') {
+          return ok(
+            record.response as CreateListingResponse,
+            undefined,
+            record.statusCode,
+            correlationId,
+          );
+        }
+        if (record.status === 'STARTED') {
+          throw new TooManyRequestsError(
+            'A request with this Idempotency-Key is currently processing.',
+            undefined,
+            getRateLimitWindowSeconds('api/marketplace/listings/create'),
+          );
+        }
+      }
+      await idempotencyService.start(idempotencyKey);
     }
 
-    const { networkPassphrase: _networkPassphrase, ...request } = validation.data;
-    assertWalletMatchesSession(auth.address, request.sellerAddress, 'sellerAddress');
+    try {
+      const body = await parseJsonWithLimit(req, {
+        limitBytes: JSON_BODY_LIMITS.marketplaceListingsCreate,
+      });
 
-    const listing = await marketplaceService.createListing(request);
-    const response: CreateListingResponse = { listing };
-    return ok(response, undefined, 201, correlationId);
+      if (!body || typeof body !== 'object') {
+        throw new ValidationError('Request body must be an object');
+      }
+
+      const request = body as CreateListingRequest;
+      const listing = await marketplaceService.createListing(request);
+      const response: CreateListingResponse = { listing };
+
+      if (idempotencyKey) {
+        await idempotencyService.complete(idempotencyKey, response, 201);
+      }
+
+      return ok(response, undefined, 201, correlationId);
+    } catch (error) {
+      if (idempotencyKey) {
+        await idempotencyService.fail(idempotencyKey);
+      }
+      throw error;
+    }
   },
   { cors: MARKETPLACE_LISTINGS_CORS_POLICY },
 );

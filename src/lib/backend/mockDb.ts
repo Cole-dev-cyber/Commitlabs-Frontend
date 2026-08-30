@@ -1,8 +1,11 @@
 /**
  * Shared mock database for dev/test data.
  *
- * Provides the small JSON-backed storage contract expected by local mock-data
- * routes and services without requiring a real database.
+ * This module provides the contract expected by routes and services that
+ * intentionally read/write a lightweight JSON backing store during local
+ * development and tests. The implementation is intentionally simple: it keeps
+ * all records in the workspace root as `.mock-db.json` and normalizes empty
+ * data to a consistent shape.
  */
 
 import fs from 'fs/promises';
@@ -59,13 +62,17 @@ export interface MockData {
 }
 
 const mockDbPath = path.join(process.cwd(), '.mock-db.json');
-const EMPTY_MOCK_DATA: MockData = { commitments: [], attestations: [], listings: [] };
+
+const EMPTY_MOCK_DATA: MockData = {
+  commitments: [],
+  attestations: [],
+  listings: [],
+};
 
 let writeQueue: Promise<void> = Promise.resolve();
 
 function normalizeMockData(data: Partial<MockData> | null | undefined): MockData {
   const source = data ?? {};
-
   return {
     commitments: Array.isArray(source.commitments) ? source.commitments : [],
     attestations: Array.isArray(source.attestations) ? source.attestations : [],
