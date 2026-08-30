@@ -44,18 +44,14 @@ import { logCommitmentSettled } from '@/lib/backend/logger';
 import { idempotencyService } from '@/lib/backend/idempotency';
 import { checkRateLimit, getRateLimitWindowSeconds } from '@/lib/backend/rateLimit';
 import { withApiHandler } from '@/lib/backend/withApiHandler';
-import { idempotencyService } from '@/lib/backend/idempotency';
-import { diagnosticsService } from '@/lib/backend/diagnostics';
-import {
-  verifyOwnership,
-  verifyCanSettle,
-  validateTransactionResponse,
-  validateAddressBounds,
-} from '@/lib/backend/transactionValidation';
-import { randomUUID } from 'crypto';
+import type { TransactionMetadata, TransactionType } from '@/lib/transaction/transactionTypes';
+import { TRANSACTION_BOUNDS, createTransactionError } from '@/lib/transaction/transactionTypes';
+import { TransactionStateMachine } from '@/lib/transaction/transactionStateMachine';
+import { validateTransactionMetadata } from '@/lib/transaction/transactionStateMachine';
 
 const SettleRequestSchema = z.object({
-  callerAddress: z.string(),
+  callerAddress: z.string().optional(),
+  transactionId: z.string().optional(),
 });
 
 const COMMITMENT_SETTLE_CORS_POLICY = {
@@ -64,16 +60,15 @@ const COMMITMENT_SETTLE_CORS_POLICY = {
 
 export const OPTIONS = createCorsOptionsHandler(COMMITMENT_SETTLE_CORS_POLICY);
 
-export const POST = withApiHandler(async (req: NextRequest, { params }, correlationId) => {
-  // Generate unique operation ID for diagnostics
-  const operationId = randomUUID();
-  const telemetry = diagnosticsService.startOperation(
-    operationId,
-    'settle_commitment',
-    100, // max concurrent
-  );
-  try {
-    // ─── CSRF Protection ──────────────────────────────────────────────────────
+/**
+ * Generate a unique transaction ID
+ */
+function generateTransactionId(commitmentId: string): string {
+  return `settle_${commitmentId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+export const POST = withApiHandler(
+  async (req: NextRequest, { params }, correlationId) => {
     assertMutationCsrf(req);
 
     // ─── Rate Limiting ────────────────────────────────────────────────────────
@@ -128,51 +123,85 @@ export const POST = withApiHandler(async (req: NextRequest, { params }, correlat
         throw new ValidationError('Invalid request data', validation.error.issues);
       }
 
-    // ─── Address Bounds Validation ────────────────────────────────────────────
-    const callerAddress = validateAddressBounds(validation.data.callerAddress, 'callerAddress');
-
-    // ─── Commitment State Check (Precondition Invariant) ───────────────────────
+    const callerAddress = validation.data.callerAddress;
+    const clientTransactionId = validation.data.transactionId;
+    
+    // Generate or use client-provided transaction ID
+    const transactionId = clientTransactionId || generateTransactionId(id);
+    
+    // Initialize state machine for this transaction
+    const stateMachine = new TransactionStateMachine('pending');
+    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const commitment: any = await getCommitmentFromChain(id, { requestId: correlationId });
 
     if (!commitment) {
+      const error = createTransactionError(
+        'VALIDATION_ERROR' as any,
+        'Commitment not found',
+        transactionId,
+      );
+      stateMachine.transition('failed');
       throw new NotFoundError('Commitment', { commitmentId: id });
     }
-
-    // Verify commitment can be settled
-    try {
-      verifyCanSettle(commitment.status);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Cannot settle commitment';
-      throw new ConflictError(errorMsg, { commitmentId: id, status: commitment.status });
-    }
-
-    // ─── Ownership Verification (Authorization Boundary) ──────────────────────
-    try {
-      verifyOwnership(callerAddress, commitment.ownerAddress);
-    } catch (error) {
-      diagnosticsService.completeOperation(
-        operationId,
-        'failure',
-        'Authorization failed: ownership verification',
-        { commitmentId: id, reason: 'ownership_mismatch' },
+    if (commitment.status === 'SETTLED') {
+      const error = createTransactionError(
+        'VALIDATION_ERROR' as any,
+        'Commitment has already been settled',
+        transactionId,
       );
-      if (error instanceof ForbiddenError) {
-        throw error;
-      }
-      throw new ForbiddenError('Ownership verification failed', { commitmentId: id });
+      stateMachine.transition('rejected');
+      throw new ConflictError('Commitment has already been settled');
+    }
+    if (commitment.status === 'VIOLATED') {
+      const error = createTransactionError(
+        'VALIDATION_ERROR' as any,
+        'Commitment has been violated and cannot be settled',
+        transactionId,
+      );
+      stateMachine.transition('rejected');
+      throw new ConflictError('Commitment has been violated and cannot be settled');
+    }
+    if (commitment.status === 'EARLY_EXIT') {
+      const error = createTransactionError(
+        'VALIDATION_ERROR' as any,
+        'Commitment has already been exited early',
+        transactionId,
+      );
+      stateMachine.transition('rejected');
+      throw new ConflictError('Commitment has already been exited early');
+    }
+    if (
+      callerAddress &&
+      commitment.ownerAddress &&
+      callerAddress.toLowerCase() !== commitment.ownerAddress.toLowerCase()
+    ) {
+      const error = createTransactionError(
+        'VALIDATION_ERROR' as any,
+        'You do not own this commitment',
+        transactionId,
+      );
+      stateMachine.transition('failed');
+      throw new ForbiddenError('You do not own this commitment');
     }
 
-    // ─── Execute Settlement on Chain ──────────────────────────────────────────
-    const settlementResult = await settleCommitmentOnChain(
-      {
-        commitmentId: id,
-        callerAddress,
-      },
-      { requestId: correlationId },
-    );
+    // Transition to confirming state before blockchain call
+    const transitionError = stateMachine.transition('confirming');
+    if (transitionError) {
+      throw new ConflictError(transitionError.message);
+    }
 
-    // ─── Validate Transaction Response (Malformed Response Detection) ──────────
-    validateTransactionResponse(settlementResult, 'settlement');
+    try {
+      const settlementResult = await settleCommitmentOnChain(
+        {
+          commitmentId: id,
+          callerAddress,
+        },
+        { requestId: correlationId },
+      );
+
+      // Transition to confirmed state on success
+      stateMachine.transition('confirmed');
 
       logCommitmentSettled({
         ip,
@@ -183,44 +212,47 @@ export const POST = withApiHandler(async (req: NextRequest, { params }, correlat
         txHash: settlementResult.txHash,
       });
 
-    const responseData = {
-      commitmentId: id,
-      settlementAmount: settlementResult.settlementAmount,
-      finalStatus: settlementResult.finalStatus,
-      txHash: settlementResult.txHash,
-      reference: settlementResult.reference,
-      settledAt: new Date().toISOString(),
-    };
-
-    if (idempotencyKey) {
-      await idempotencyService.complete(idempotencyKey, responseData, 200);
+      const responseData = {
+        commitmentId: id,
+        settlementAmount: settlementResult.settlementAmount,
+        finalStatus: settlementResult.finalStatus,
+        txHash: settlementResult.txHash,
+        reference: settlementResult.reference,
+        settledAt: new Date().toISOString(),
+        transactionId,
+        transactionState: stateMachine.getState(),
+      };
+      
+      return ok(responseData, undefined, 200, correlationId);
+    } catch (error) {
+      // Transition to failed state on error
+      stateMachine.transition('failed');
+      
+      // Create transaction metadata for error tracking
+      const additionalFields: Partial<TransactionMetadata> = {
+        callerAddress,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      
+      const transactionMetadata: TransactionMetadata = stateMachine.toMetadata(
+        transactionId,
+        'settlement' as TransactionType,
+        id,
+        additionalFields,
+      );
+      
+      // Validate metadata invariants
+      const validationError = validateTransactionMetadata(transactionMetadata);
+      if (validationError) {
+        // Log validation error but don't fail the request
+        console.error('[Transaction] Metadata validation failed:', validationError);
+      }
+      
+      throw error;
     }
-
-    diagnosticsService.completeOperation(
-      operationId,
-      'success',
-      undefined,
-      { commitmentId: id, txHash: settlementResult.txHash },
-    );
-
-    return ok(responseData, undefined, 200, correlationId);
-  } catch (error) {
-    // Clean up idempotency record on failure to allow retry
-    const idempotencyKey = req.headers.get('idempotency-key');
-    if (idempotencyKey) {
-      await idempotencyService.fail(idempotencyKey);
-    }
-
-    // Record failure in diagnostics
-    const errorMessage =
-      error instanceof Error ? error.message : 'Unknown error during settlement';
-    diagnosticsService.completeOperation(operationId, 'failure', errorMessage, {
-      errorType: error instanceof Error ? error.constructor.name : typeof error,
-    });
-
-    throw error;
-  }
-}, { cors: COMMITMENT_SETTLE_CORS_POLICY });
+  },
+  { cors: COMMITMENT_SETTLE_CORS_POLICY },
+);
 
 const _405 = methodNotAllowed(['POST']);
 export { _405 as GET, _405 as PUT, _405 as PATCH, _405 as DELETE };
