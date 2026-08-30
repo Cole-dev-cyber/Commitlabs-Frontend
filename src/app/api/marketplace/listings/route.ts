@@ -3,32 +3,36 @@ import { ok, methodNotAllowed } from '@/lib/backend/apiResponse';
 import { isFeatureEnabled } from '@/lib/backend/config';
 import { assertMutationCsrf } from '@/lib/backend/csrf';
 import { createCorsOptionsHandler, type CorsRoutePolicy } from '@/lib/backend/cors';
-import { TooManyRequestsError, ValidationError } from '@/lib/backend/errors';
+import { ValidationError } from '@/lib/backend/errors';
 import { getClientIp } from '@/lib/backend/getClientIp';
 import { idempotencyService } from '@/lib/backend/idempotency';
 import { parseJsonWithLimit, JSON_BODY_LIMITS } from '@/lib/backend/jsonBodyLimit';
 import {
-  assertWalletMatchesSession,
-  MarketplaceCreateListingBoundarySchema,
-} from '@/lib/backend/marketplaceBoundary';
-import { checkRateLimit, getRateLimitWindowSeconds } from '@/lib/backend/rateLimit';
-import { verifyAuth } from '@/lib/backend/requireAuth';
-import {
   getMarketplaceSortKeys,
   isMarketplaceSortBy,
-  listMarketplaceListings,
-  marketplaceService,
   type MarketplaceCommitmentType,
   type MarketplacePublicListing,
 } from '@/lib/backend/services/marketplace';
 import { withApiHandler } from '@/lib/backend/withApiHandler';
-import type { CreateListingResponse } from '@/types/marketplace';
+import type { CreateListingRequest, CreateListingResponse } from '@/types/marketplace';
+import { MARKETPLACE_RATE_LIMIT_ACTIONS } from '@/lib/marketplace/constants';
+import { listMarketplaceListings, marketplaceService } from '@/lib/marketplace';
+import { enforceMarketplaceRateLimit } from '@/lib/marketplace/rate-limit';
+import { emitMarketplaceTelemetry } from '@/lib/marketplace/telemetry';
+import { parseBoundedPagination, parseOptionalNumber } from '@/lib/marketplace/validation';
 
 const COMMITMENT_TYPES: readonly MarketplaceCommitmentType[] = [
   'Safe',
   'Balanced',
   'Aggressive',
 ] as const;
+
+const MAX_LISTINGS_PAGE = 1000;
+const MAX_LISTINGS_PAGE_SIZE = 100;
+const MAX_COMPLIANCE = 100;
+const MIN_COMPLIANCE = 0;
+const MAX_LOSS_PERCENT = 100;
+const MIN_LOSS_PERCENT = 0;
 
 interface ParseResult {
   type?: MarketplaceCommitmentType;
@@ -61,26 +65,6 @@ function toMarketplaceCard(listing: MarketplacePublicListing) {
   };
 }
 
-function parseNumber(searchParams: URLSearchParams, key: string): number | undefined {
-  const raw = searchParams.get(key);
-  if (raw === null) return undefined;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
-    throw new ValidationError(`Invalid '${key}' query param. Expected a number.`);
-  }
-  return parsed;
-}
-
-function parseInteger(searchParams: URLSearchParams, key: string, defaultValue: number): number {
-  const raw = searchParams.get(key);
-  if (raw === null) return defaultValue;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
-    throw new ValidationError(`Invalid '${key}' query param. Expected a positive integer.`);
-  }
-  return parsed;
-}
-
 function parseType(searchParams: URLSearchParams): MarketplaceCommitmentType | undefined {
   const raw = searchParams.get('type');
   if (raw === null) return undefined;
@@ -102,11 +86,36 @@ function parseType(searchParams: URLSearchParams): MarketplaceCommitmentType | u
 }
 
 function parseQuery(searchParams: URLSearchParams): ParseResult {
-  const minAmount = parseNumber(searchParams, 'minAmount');
-  const maxAmount = parseNumber(searchParams, 'maxAmount');
+  const minAmount = parseOptionalNumber(searchParams, 'minAmount');
+  const maxAmount = parseOptionalNumber(searchParams, 'maxAmount');
   if (minAmount !== undefined && maxAmount !== undefined && minAmount > maxAmount) {
     throw new ValidationError(
       "Invalid amount filter. 'minAmount' cannot be greater than 'maxAmount'.",
+    );
+  }
+  if (minAmount !== undefined && minAmount < 0) {
+    throw new ValidationError("'minAmount' must be non-negative.");
+  }
+  if (maxAmount !== undefined && maxAmount < 0) {
+    throw new ValidationError("'maxAmount' must be non-negative.");
+  }
+
+  const minCompliance = parseOptionalNumber(searchParams, 'minCompliance');
+  const maxLoss = parseOptionalNumber(searchParams, 'maxLoss');
+  if (
+    minCompliance !== undefined &&
+    (minCompliance < MIN_COMPLIANCE || minCompliance > MAX_COMPLIANCE)
+  ) {
+    throw new ValidationError(
+      `'minCompliance' must be between ${MIN_COMPLIANCE} and ${MAX_COMPLIANCE}.`,
+    );
+  }
+  if (
+    maxLoss !== undefined &&
+    (maxLoss < MIN_LOSS_PERCENT || maxLoss > MAX_LOSS_PERCENT)
+  ) {
+    throw new ValidationError(
+      `'maxLoss' must be between ${MIN_LOSS_PERCENT} and ${MAX_LOSS_PERCENT}.`,
     );
   }
 
@@ -117,12 +126,26 @@ function parseQuery(searchParams: URLSearchParams): ParseResult {
     );
   }
 
-  const type = parseType(searchParams);
-  const minCompliance = parseNumber(searchParams, 'minCompliance');
-  const maxLoss = parseNumber(searchParams, 'maxLoss');
-  const result: ParseResult = {
-    page: parseInteger(searchParams, 'page', 1),
-    pageSize: parseInteger(searchParams, 'pageSize', 10),
+  const { page, pageSize } = parseBoundedPagination(searchParams);
+  if (page !== undefined && page < 1) {
+    throw new ValidationError("'page' must be a positive integer.");
+  }
+  if (page !== undefined && page > MAX_LISTINGS_PAGE) {
+    throw new ValidationError(`'page' exceeds maximum of ${MAX_LISTINGS_PAGE}.`);
+  }
+  if (pageSize !== undefined && pageSize > MAX_LISTINGS_PAGE_SIZE) {
+    throw new ValidationError(`'pageSize' exceeds maximum of ${MAX_LISTINGS_PAGE_SIZE}.`);
+  }
+
+  return {
+    type: parseType(searchParams),
+    minCompliance,
+    maxLoss,
+    minAmount,
+    maxAmount,
+    sortBy,
+    page,
+    pageSize,
   };
 
   if (type !== undefined) result.type = type;
@@ -137,92 +160,89 @@ function parseQuery(searchParams: URLSearchParams): ParseResult {
 
 export const GET = withApiHandler(
   async (req: NextRequest, _context, correlationId) => {
-    if (!isFeatureEnabled('marketplace')) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Marketplace feature is disabled.',
-            details: { feature: 'marketplace' },
+    const startedAt = Date.now();
+    try {
+      if (!isFeatureEnabled('marketplace')) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'NOT_FOUND',
+              message: 'Marketplace feature is disabled.',
+              details: { feature: 'marketplace' },
+            },
           },
+          { status: 404 },
+        );
+      }
+
+      const ip = getClientIp(req);
+      await enforceMarketplaceRateLimit(ip, MARKETPLACE_RATE_LIMIT_ACTIONS.LIST);
+
+      const { searchParams } = new URL(req.url);
+      const filters = parseQuery(searchParams);
+      const listings = await listMarketplaceListings(filters);
+
+      const response = ok(
+        {
+          listings,
+          cards: listings.map(toMarketplaceCard),
+          total: listings.length,
         },
-        { status: 404 },
+        undefined,
+        200,
+        correlationId,
       );
+      response.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=30');
+      emitMarketplaceTelemetry({
+        event: 'marketplace.listings.get.success',
+        correlationId,
+        method: 'GET',
+        path: '/api/marketplace/listings',
+        statusCode: 200,
+        latencyMs: Date.now() - startedAt,
+        page: filters.page,
+        pageSize: filters.pageSize,
+      });
+      return response;
+    } catch (error) {
+      const err = error as { code?: string; status?: number };
+      emitMarketplaceTelemetry({
+        event: 'marketplace.listings.get.failed',
+        correlationId,
+        method: 'GET',
+        path: '/api/marketplace/listings',
+        errorCode: err.code,
+        statusCode: err.status ?? 500,
+        latencyMs: Date.now() - startedAt,
+      });
+      throw error;
     }
-
-    const ip = getClientIp(req);
-    if (!(await checkRateLimit(ip, 'api/marketplace/listings'))) {
-      throw new TooManyRequestsError();
-    }
-
-    const { searchParams } = new URL(req.url);
-    const filters = parseQuery(searchParams);
-    const listings = await listMarketplaceListings(filters);
-
-    return ok(
-      {
-        listings,
-        cards: listings.map(toMarketplaceCard),
-        total: listings.length,
-      },
-      undefined,
-      200,
-      correlationId,
-    );
   },
   { cors: MARKETPLACE_LISTINGS_CORS_POLICY, enableETag: true },
 );
 
 export const POST = withApiHandler(
   async (req: NextRequest, _context, correlationId) => {
-    if (!isFeatureEnabled('marketplace')) {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Marketplace feature is disabled.',
-            details: { feature: 'marketplace' },
-          },
-        },
-        { status: 404 },
-      );
-    }
-
-    assertMutationCsrf(req);
-
-    const ip = getClientIp(req);
-    if (!(await checkRateLimit(ip, 'api/marketplace/listings/create'))) {
-      throw new TooManyRequestsError(
-        'Too many requests. Please try again later.',
-        undefined,
-        getRateLimitWindowSeconds('api/marketplace/listings/create'),
-      );
-    }
-
-    const idempotencyKey = req.headers.get('idempotency-key');
-    if (idempotencyKey) {
-      const record = await idempotencyService.getRecord(idempotencyKey);
-      if (record) {
-        if (record.status === 'COMPLETED') {
-          return ok(
-            record.response as CreateListingResponse,
-            undefined,
-            record.statusCode,
-            correlationId,
-          );
-        }
-        if (record.status === 'STARTED') {
-          throw new TooManyRequestsError(
-            'A request with this Idempotency-Key is currently processing.',
-            undefined,
-            getRateLimitWindowSeconds('api/marketplace/listings/create'),
-          );
-        }
-      }
-      await idempotencyService.start(idempotencyKey);
-    }
-
+    const startedAt = Date.now();
     try {
+      if (!isFeatureEnabled('marketplace')) {
+        return NextResponse.json(
+          {
+            error: {
+              code: 'NOT_FOUND',
+              message: 'Marketplace feature is disabled.',
+              details: { feature: 'marketplace' },
+            },
+          },
+          { status: 404 },
+        );
+      }
+
+      assertMutationCsrf(req);
+
+      const ip = getClientIp(req);
+      await enforceMarketplaceRateLimit(ip, MARKETPLACE_RATE_LIMIT_ACTIONS.CREATE);
+
       const body = await parseJsonWithLimit(req, {
         limitBytes: JSON_BODY_LIMITS.marketplaceListingsCreate,
       });
@@ -234,16 +254,28 @@ export const POST = withApiHandler(
       const request = body as CreateListingRequest;
       const listing = await marketplaceService.createListing(request);
       const response: CreateListingResponse = { listing };
-
-      if (idempotencyKey) {
-        await idempotencyService.complete(idempotencyKey, response, 201);
-      }
-
-      return ok(response, undefined, 201, correlationId);
+      const apiResponse = ok(response, undefined, 201, correlationId);
+      apiResponse.headers.set('Cache-Control', 'no-store');
+      emitMarketplaceTelemetry({
+        event: 'marketplace.listings.post.success',
+        correlationId,
+        method: 'POST',
+        path: '/api/marketplace/listings',
+        statusCode: 201,
+        latencyMs: Date.now() - startedAt,
+      });
+      return apiResponse;
     } catch (error) {
-      if (idempotencyKey) {
-        await idempotencyService.fail(idempotencyKey);
-      }
+      const err = error as { code?: string; status?: number };
+      emitMarketplaceTelemetry({
+        event: 'marketplace.listings.post.failed',
+        correlationId,
+        method: 'POST',
+        path: '/api/marketplace/listings',
+        errorCode: err.code,
+        statusCode: err.status ?? 500,
+        latencyMs: Date.now() - startedAt,
+      });
       throw error;
     }
   },
