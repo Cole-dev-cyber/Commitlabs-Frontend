@@ -29,7 +29,7 @@ import {
   CHART_Y_AXIS_PROPS,
   LIFECYCLE_REF_LINE,
   formatLocaleNumber,
-  sanitizeChartSeries,
+  normalizeChartData,
 } from './chartConfig';
 import { downsampleSeries } from '../../utils/downsample';
 
@@ -82,18 +82,16 @@ const HealthMetricsValueHistoryChartComponent: React.FC<HealthMetricsValueHistor
   benchmarkLabel,
 }) => {
   const reducedMotion = useReducedMotion();
-  const safeData = useMemo(() => sanitizeChartSeries(data, 'currentValue'), [data]);
-  const safeBenchmarkData = useMemo(
-    () => sanitizeChartSeries(benchmarkData ?? [], 'benchmarkValue'),
-    [benchmarkData],
-  );
+  const safeData = useMemo(() => normalizeChartData(data), [data]);
 
   const hasBenchmark = Boolean(safeBenchmarkData.length > 0);
 
   const benchmarkByDate = useMemo(() => {
-    if (!hasBenchmark) return {};
-    return Object.fromEntries(safeBenchmarkData.map((p) => [p.date, p.benchmarkValue]));
-  }, [hasBenchmark, safeBenchmarkData]);
+    if (!hasBenchmark || !benchmarkData) return {};
+    return Object.fromEntries(
+      normalizeChartData(benchmarkData).map((p) => [p.date, p.benchmarkValue]),
+    );
+  }, [benchmarkData, hasBenchmark]);
 
   const mergedData = useMemo(() => {
     if (!hasBenchmark) return safeData;
@@ -102,10 +100,6 @@ const HealthMetricsValueHistoryChartComponent: React.FC<HealthMetricsValueHistor
       benchmarkValue: benchmarkByDate[point.date] ?? null,
     }));
   }, [safeData, hasBenchmark, benchmarkByDate]);
-
-  // Bound the rendered point count so SVG/DOM/paint cost stays flat regardless
-  // of how large the backend time-series grows.
-  const boundedData = useMemo(() => downsampleSeries(mergedData), [mergedData]);
 
   const yTickFormatter = useCallback((value: number) => formatLocaleNumber(value), []);
 
