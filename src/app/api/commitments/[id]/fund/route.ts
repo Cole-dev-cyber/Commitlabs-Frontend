@@ -1,3 +1,4 @@
+import { NextRequest, NextResponse } from 'next/server';
 /**
  * POST /api/commitments/[id]/fund
  *
@@ -30,11 +31,13 @@ import { ok, methodNotAllowed } from '@/lib/backend/apiResponse';
 import { assertMutationCsrf } from '@/lib/backend/csrf';
 import { createCorsOptionsHandler, type CorsRoutePolicy } from '@/lib/backend/cors';
 import {
+  BackendError,
   ConflictError,
   ForbiddenError,
   NotFoundError,
   TooManyRequestsError,
   ValidationError,
+  toBackendErrorResponse,
 } from '@/lib/backend/errors';
 import { getClientIp } from '@/lib/backend/getClientIp';
 import { fundEscrowOnChain, getCommitmentFromChain } from '@/lib/backend/services/contracts';
@@ -208,12 +211,17 @@ export const POST = withApiHandler(
         callerAddress,
       });
 
+      // Capture fundedAt once so the idempotency cache stores the exact
+      // same timestamp that is returned in the response body — a retry with
+      // the same Idempotency-Key will replay this stable value.
+      const fundedAt = new Date().toISOString();
+
       // ─── Success Response & Idempotency Caching ───────────────────────────────
       const responseData = {
         commitmentId: id,
         txHash: funded.txHash,
         reference: funded.reference,
-        fundedAt: new Date().toISOString(),
+        fundedAt,
       };
 
       if (idempotencyKey) {
@@ -245,6 +253,13 @@ export const POST = withApiHandler(
       const idempotencyKey = req.headers.get('idempotency-key');
       if (idempotencyKey) {
         await idempotencyService.fail(idempotencyKey);
+      }
+      // BackendError is thrown by the contracts layer (e.g. blockchain 502).
+      // It is not an ApiError, so withApiHandler would otherwise swallow
+      // the status code and return 500. Return the structured error response
+      // directly so callers receive the correct HTTP status (e.g. 502).
+      if (error instanceof BackendError) {
+        return NextResponse.json(toBackendErrorResponse(error), { status: error.status });
       }
 
       // Record failure in diagnostics for observability
