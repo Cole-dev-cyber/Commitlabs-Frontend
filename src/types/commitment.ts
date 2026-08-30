@@ -1,40 +1,38 @@
 /**
- * @/types/commitment
+ * src/types/commitment.ts
  *
- * Public re-export barrel for commitment domain types.
- *
- * Components and hooks throughout the application import from this path.
- * The canonical type definitions live in `src/lib/types/domain.ts` so that
- * backend utilities can share the same type without depending on
- * `src/types/` (which is treated as a frontend-facing module).
+ * Public-facing commitment types used across the frontend.
+ * Mirrors the domain shapes in src/lib/types/domain.ts but exposes a
+ * stable, UI-oriented interface that isn't tied to the backend internals.
  */
 
-export type {
-  Commitment,
-  CommitmentType,
-  CommitmentStatus,
-  CommitmentStats,
-  Attestation,
-  AttestationType,
-  AttestationVerdict,
-  AttestationSeverity,
-  HealthMetrics,
-  MarketplaceListing,
-  CreateListingRequest,
-  HistoryEvent,
-  HistoryEventKind,
-  CreatedEvent,
-  AttestationEvent,
-  EarlyExitEvent,
-  SettlementEvent,
-  Notification,
-  NotificationSeverity,
-  NotificationType,
-  TrendDirection,
-  StatTrend,
-  ListingStatus,
-} from '@/lib/types/domain';
+/** On-chain lifecycle states. */
+export type CommitmentStatus = 'Active' | 'Settled' | 'Violated' | 'Early Exit';
 
-// Re-export chain-status values so consumers can reference on-chain status
-// strings without importing from the backend services module directly.
-export type { ChainCommitmentStatus } from '@/lib/backend/services/contracts';
+/** Risk profile. */
+export type CommitmentType = 'Safe' | 'Balanced' | 'Aggressive';
+
+/** UI-facing commitment shape used by MyCommitmentsGrid and related views. */
+export interface Commitment {
+  id: string;
+  type: CommitmentType;
+  status: CommitmentStatus;
+  ownerAddress?: string;
+  asset: string;
+  amount: string;
+  currentValue?: string;
+  changePercent?: number;
+  durationProgress?: number;
+  daysRemaining?: number;
+  complianceScore?: number;
+  maxLoss?: string;
+  currentDrawdown?: string;
+  /** ISO-8601 date string (legacy field). */
+  createdDate?: string;
+  /** ISO-8601 date string (legacy field). */
+  expiryDate?: string;
+  /** ISO-8601 date string. */
+  createdAt?: string;
+  /** ISO-8601 date string. */
+  expiresAt?: string;
+}

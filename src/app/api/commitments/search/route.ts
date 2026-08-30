@@ -48,7 +48,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ok, methodNotAllowed } from '@/lib/backend/apiResponse';
 import { createCorsOptionsHandler, type CorsRoutePolicy } from '@/lib/backend/cors';
-import { TooManyRequestsError, ValidationError } from '@/lib/backend/errors';
+import { ForbiddenError, TooManyRequestsError, ValidationError } from '@/lib/backend/errors';
 import { getClientIp } from '@/lib/backend/getClientIp';
 import { logInfo, logWarn } from '@/lib/backend/logger';
 import { checkRateLimit } from '@/lib/backend/rateLimit';
@@ -293,26 +293,46 @@ export const GET = withApiHandler(
   async (req: NextRequest, _context, correlationId) => {
     const startedAt = Date.now();
 
-    // ── Invariant I9: concurrent request bound ─────────────────────────────
-    // Check before incrementing so the ceiling applies to the accepted set,
-    // not the queued set.
-    if (currentSearchRequests >= MAX_CONCURRENT_SEARCH_REQUESTS) {
-      throw new TooManyRequestsError(
-        'Too many concurrent search requests. Please try again shortly.',
-        { concurrencyLimit: MAX_CONCURRENT_SEARCH_REQUESTS },
-        5,
-      );
+    // Authorization before any query parsing, cache lookup, or chain work.
+    // requireAuth returns the enriched request with `.user` populated.
+    const authedReq = requireAuth(req);
+
+    // 1. Rate limit
+    const ip = getClientIp(req);
+    if (!(await checkRateLimit(ip, 'api/commitments/search'))) {
+      throw new TooManyRequestsError();
     }
     currentSearchRequests++;
 
-    try {
-      // ── Invariant I1: authorization before any query parsing or chain work ─
-      requireAuth(req);
+    // 2. Parse & validate query params with Zod
+    const { searchParams } = new URL(req.url);
+    const rawQuery = Object.fromEntries(searchParams.entries());
+    const queryResult = CommitmentSearchQuerySchema.safeParse(rawQuery);
 
-      // ── Invariant I2: rate limit (per-IP) ────────────────────────────────
-      const ip = getClientIp(req);
-      if (!(await checkRateLimit(ip, 'api/commitments/search'))) {
-        throw new TooManyRequestsError();
+    if (!queryResult.success) {
+      throw new ValidationError('Invalid search parameters', queryResult.error.issues);
+    }
+
+    const { ownerAddress, asset, commitmentId, status, riskType, minCompliance } = queryResult.data;
+
+    // ── Scope enforcement ────────────────────────────────────────────────────
+    // The authenticated user may only query their own commitments.
+    // This prevents one wallet from enumerating another wallet's positions.
+    if (authedReq.user.address !== ownerAddress) {
+      throw new ForbiddenError(
+        'ownerAddress does not match the authenticated wallet address.',
+      );
+    }
+
+    // 3. Parse pagination & sort via pagination.ts helpers
+    let paginationParams;
+    let sortParams;
+    try {
+      paginationParams = parsePaginationParams(searchParams);
+      sortParams = parseSortParams(searchParams, SORTABLE_FIELDS, 'createdAt', 'desc');
+    } catch (err) {
+      if (err instanceof PaginationParseError) {
+        return paginationErrorResponse(err, correlationId);
       }
 
       // 2. Parse & validate query params with Zod
@@ -320,12 +340,32 @@ export const GET = withApiHandler(
       const rawQuery = Object.fromEntries(searchParams.entries());
       const queryResult = CommitmentSearchQuerySchema.safeParse(rawQuery);
 
-      if (!queryResult.success) {
-        throw new ValidationError('Invalid search parameters', queryResult.error.issues);
-      }
+    const cached = await cache.get<{
+      data: CommitmentSearchItem[];
+      meta: Record<string, unknown>;
+      filters: Record<string, unknown>;
+      diagnostics: Record<string, unknown>;
+    }>(cacheKey);
 
-      const { ownerAddress, asset, commitmentId, status, riskType, minCompliance } =
-        queryResult.data;
+    if (cached !== null) {
+      const totalDurationMs = Date.now() - startedAt;
+      logInfo(req, '[api/commitments/search] served from cache', {
+        correlationId,
+        ownerAddress,
+        durationMs: totalDurationMs,
+        cacheHit: true,
+      });
+      // Attach updated latency to the cached payload diagnostics before responding.
+      const cachedWithRefreshedDiagnostics = {
+        ...cached,
+        diagnostics: {
+          ...(cached.diagnostics ?? {}),
+          servedFromCache: true,
+          responseLatencyMs: totalDurationMs,
+        },
+      };
+      return ok(cachedWithRefreshedDiagnostics, undefined, 200, correlationId);
+    }
 
       // ── Invariants I3 + I4: pagination & sort bounds ──────────────────────
       let paginationParams;
@@ -340,39 +380,116 @@ export const GET = withApiHandler(
         throw err;
       }
 
-      // ── Invariant I8: deterministic cache key ─────────────────────────────
-      const cacheKey = buildSearchCacheKey(ownerAddress, {
-        asset,
-        commitmentId,
-        status,
-        riskType,
-        minCompliance,
+    let truncated = false;
+    let sourceCommitments = commitments;
+    if (commitments.length > MAX_CHAIN_COMMITMENTS_PROCESSED) {
+      truncated = true;
+      sourceCommitments = commitments.slice(0, MAX_CHAIN_COMMITMENTS_PROCESSED);
+      logWarn(req, '[api/commitments/search] chain result exceeded processing bound, truncating', {
+        correlationId,
+        ownerAddress,
+        rawCount: commitments.length,
+        boundApplied: MAX_CHAIN_COMMITMENTS_PROCESSED,
+      });
+    }
+
+    // 6. Map to search items
+    const filterStartedAt = Date.now();
+    let items: CommitmentSearchItem[] = sourceCommitments.map((c: any) => ({
+      commitmentId: String(c.id ?? c.commitmentId),
+      ownerAddress: c.ownerAddress,
+      asset: c.asset,
+      amount: typeof c.amount === 'bigint' ? String(c.amount) : String(c.amount),
+      status: c.status as ChainCommitmentStatus,
+      riskType: inferRiskType(c),
+      complianceScore: c.complianceScore ?? 0,
+      currentValue:
+        typeof c.currentValue === 'bigint' ? String(c.currentValue) : String(c.currentValue ?? '0'),
+      feeEarned: String(c.feeEarned ?? '0'),
+      violationCount: c.violationCount ?? 0,
+      createdAt: c.createdAt ?? new Date().toISOString(),
+      expiresAt: c.expiresAt ?? new Date().toISOString(),
+    }));
+
+    // 7. Apply filters
+    if (asset) {
+      const normalizedAsset = asset.toUpperCase();
+      items = items.filter((c) => c.asset.toUpperCase() === normalizedAsset);
+    }
+
+    if (commitmentId) {
+      const normalizedQuery = commitmentId.toUpperCase();
+      items = items.filter((c) => c.commitmentId.toUpperCase().includes(normalizedQuery));
+    }
+
+    if (status) {
+      items = items.filter((c) => c.status === status);
+    }
+
+    if (riskType) {
+      items = items.filter((c) => c.riskType.toLowerCase() === riskType.toLowerCase());
+    }
+
+    if (minCompliance !== undefined) {
+      // minCompliance is already bounds-checked (0–100) by Zod; this is
+      // the runtime application of the filter.
+      items = items.filter((c) => c.complianceScore >= minCompliance);
+    }
+
+    // 8. Sort with stable ordering
+    items.sort((a, b) => compareItems(a, b, sortParams.sortBy, sortParams.sortOrder));
+
+    const filterDurationMs = Date.now() - filterStartedAt;
+
+    // 9. Paginate
+    const result = paginateArray(items, paginationParams);
+
+    const totalDurationMs = Date.now() - startedAt;
+
+    // 10. Build structured diagnostics (no secrets, no stack traces)
+    const diagnostics = {
+      servedFromCache: false,
+      responseLatencyMs: totalDurationMs,
+      chainLatencyMs: chainDurationMs,
+      filterLatencyMs: filterDurationMs,
+      rawCount: commitments.length,
+      filteredCount: items.length,
+      returnedCount: result.data.length,
+      truncated,
+    };
+
+    // 11. Build response with applied filter metadata
+    const responsePayload = {
+      data: result.data,
+      meta: result.meta,
+      filters: {
+        asset: asset ?? null,
+        commitmentId: commitmentId ?? null,
+        status: status ?? null,
+        riskType: riskType ?? null,
+        minCompliance: minCompliance ?? null,
         sortBy: sortParams.sortBy,
         sortOrder: sortParams.sortOrder,
-        page: paginationParams.page,
-        pageSize: paginationParams.pageSize,
-      });
+      },
+      diagnostics,
+    };
 
-      const cached = await cache.get<{
-        data: CommitmentSearchItem[];
-        meta: Record<string, unknown>;
-        filters: Record<string, unknown>;
-        _telemetry: {
-          returnedCount: number;
-          total: number;
-          filteredCount: number;
-          truncated: boolean;
-        };
-      }>(cacheKey);
+    // 12. Cache for short TTL
+    await cache.set(cacheKey, responsePayload, CacheTTL.COMMITMENT_SEARCH);
 
-      if (cached !== null) {
-        const durationMs = Date.now() - startedAt;
-        logInfo(req, '[api/commitments/search] served from cache', {
-          correlationId,
-          ownerAddress,
-          durationMs,
-          cacheHit: true,
-        });
+    logInfo(req, '[api/commitments/search] served from chain', {
+      correlationId,
+      ownerAddress,
+      durationMs: totalDurationMs,
+      chainDurationMs,
+      filterDurationMs,
+      rawCount: commitments.length,
+      filteredCount: items.length,
+      returnedCount: result.data.length,
+      total: result.meta.total,
+      cacheHit: false,
+      truncated,
+    });
 
         // Strip internal _telemetry from the payload before returning
         const { _telemetry, ...responseData } = cached;
