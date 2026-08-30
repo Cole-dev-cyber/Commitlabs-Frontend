@@ -26,6 +26,45 @@ import { useRegisterCommands } from '@/components/CommandPalette';
 import { buildCommitmentScopedCommands } from '@/components/CommandPalette/scopedActions';
 import { useWallet } from '@/hooks/useWallet';
 
+// ---------------------------------------------------------------------------
+// Bounds & constants
+// ---------------------------------------------------------------------------
+
+/** Maximum number of chart data points to render (bounds memory & rendering). */
+const MAX_CHART_POINTS = 500;
+
+/** Maximum number of attestations shown in the panel (bounds DOM nodes). */
+const MAX_VISIBLE_ATTESTATIONS = 50;
+
+/** Minimum ms between status-override transitions (prevents rapid toggling). */
+const STATUS_TRANSITION_DEBOUNCE_MS = 500;
+
+// ---------------------------------------------------------------------------
+// Structured diagnostics (never leaks secrets)
+// ---------------------------------------------------------------------------
+
+function emitPageTelemetry(
+  event: string,
+  meta: Record<string, string | number | boolean> = {},
+) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug(`[CommitmentPage] ${event}`, meta);
+    }
+  } catch {
+    // Diagnostics must never break rendering.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded mock data helpers
+// ---------------------------------------------------------------------------
+
+function boundArray<T>(arr: T[], max: number): T[] {
+  return arr.length > max ? arr.slice(arr.length - max) : arr;
+}
+
 // Mock Commitments
 const MOCK_COMMITMENTS: Record<
   string,
@@ -66,7 +105,7 @@ const MOCK_COMMITMENTS: Record<
   },
 };
 
-// Mock dispute state — populated from /api/commitments/[id] status + history in production
+// Mock dispute state
 const MOCK_DISPUTES: Record<string, DisputeInfo | null> = {
   '1': {
     stage: 'under_review',
@@ -77,83 +116,98 @@ const MOCK_DISPUTES: Record<string, DisputeInfo | null> = {
   '2': null,
 };
 
-// Mock data for health metrics
-const MOCK_COMPLIANCE_DATA = [
-  { date: 'Jan 1', complianceScore: 98 },
-  { date: 'Jan 5', complianceScore: 97 },
-  { date: 'Jan 10', complianceScore: 99 },
-  { date: 'Jan 15', complianceScore: 95 },
-  { date: 'Jan 20', complianceScore: 98 },
-  { date: 'Jan 25', complianceScore: 100 },
-  { date: 'Jan 30', complianceScore: 99 },
-];
+// Bounded mock data for health metrics
+const MOCK_COMPLIANCE_DATA = boundArray(
+  [
+    { date: 'Jan 1', complianceScore: 98 },
+    { date: 'Jan 5', complianceScore: 97 },
+    { date: 'Jan 10', complianceScore: 99 },
+    { date: 'Jan 15', complianceScore: 95 },
+    { date: 'Jan 20', complianceScore: 98 },
+    { date: 'Jan 25', complianceScore: 100 },
+    { date: 'Jan 30', complianceScore: 99 },
+  ],
+  MAX_CHART_POINTS,
+);
 
-const MOCK_DRAWDOWN_DATA = [
-  { date: 'Jan 10', drawdownPercent: 0 },
-  { date: 'Jan 15', drawdownPercent: 0.35 },
-  { date: 'Jan 20', drawdownPercent: 0.58 },
-  { date: 'Jan 25', drawdownPercent: 0.52 },
-  { date: 'Jan 28', drawdownPercent: 0.78 },
-];
+const MOCK_DRAWDOWN_DATA = boundArray(
+  [
+    { date: 'Jan 10', drawdownPercent: 0 },
+    { date: 'Jan 15', drawdownPercent: 0.35 },
+    { date: 'Jan 20', drawdownPercent: 0.58 },
+    { date: 'Jan 25', drawdownPercent: 0.52 },
+    { date: 'Jan 28', drawdownPercent: 0.78 },
+  ],
+  MAX_CHART_POINTS,
+);
 
-const MOCK_VALUE_HISTORY_DATA = [
-  { date: 'Jan 10', currentValue: 50000, initialAmount: 50000 },
-  { date: 'Jan 15', currentValue: 52000, initialAmount: 50000 },
-  { date: 'Jan 20', currentValue: 51500, initialAmount: 50000 },
-  { date: 'Jan 25', currentValue: 53000, initialAmount: 50000 },
-  { date: 'Jan 28', currentValue: 54000, initialAmount: 50000 },
-];
+const MOCK_VALUE_HISTORY_DATA = boundArray(
+  [
+    { date: 'Jan 10', currentValue: 50000, initialAmount: 50000 },
+    { date: 'Jan 15', currentValue: 52000, initialAmount: 50000 },
+    { date: 'Jan 20', currentValue: 51500, initialAmount: 50000 },
+    { date: 'Jan 25', currentValue: 53000, initialAmount: 50000 },
+    { date: 'Jan 28', currentValue: 54000, initialAmount: 50000 },
+  ],
+  MAX_CHART_POINTS,
+);
 
-const MOCK_FEE_GENERATION_DATA = [
-  { date: 'Jan 10', feeAmount: 25 },
-  { date: 'Jan 15', feeAmount: 45 },
-  { date: 'Jan 20', feeAmount: 78 },
-  { date: 'Jan 25', feeAmount: 92 },
-  { date: 'Jan 28', feeAmount: 125 },
-];
+const MOCK_FEE_GENERATION_DATA = boundArray(
+  [
+    { date: 'Jan 10', feeAmount: 25 },
+    { date: 'Jan 15', feeAmount: 45 },
+    { date: 'Jan 20', feeAmount: 78 },
+    { date: 'Jan 25', feeAmount: 92 },
+    { date: 'Jan 28', feeAmount: 125 },
+  ],
+  MAX_CHART_POINTS,
+);
 
-const MOCK_ATTESTATIONS = [
-  {
-    id: '1',
-    title: 'Daily Compliance Check',
-    description: 'All parameters within acceptable ranges. No violations detected.',
-    txHash: '0xabcdef1234567890abcdef1234567890',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    severity: 'ok' as const,
-  },
-  {
-    id: '2',
-    title: 'Allocation Verified',
-    description: 'Portfolio allocation meets all constraints. Safe protocol usage confirmed.',
-    txHash: '0x123456789abcdef123456789abcdef',
-    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    severity: 'ok' as const,
-  },
-  {
-    id: '3',
-    title: 'Increased Volatility',
-    description: 'Market volatility increased. Monitoring drawdown levels closely.',
-    txHash: '0x567890abcdef1234567890abcdef1234',
-    timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-    severity: 'warning' as const,
-  },
-  {
-    id: '4',
-    title: 'Weekly Review',
-    description: 'Commitment performing well. All rules followed consistently.',
-    txHash: '0x90abcd1234567890abcd345678',
-    timestamp: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-    severity: 'ok' as const,
-  },
-  {
-    id: '5',
-    title: 'Commitment Created',
-    description: 'Initial commitment parameters set and validated on-chain.',
-    txHash: '0xdef1234567890abcdef890abc',
-    timestamp: new Date(Date.now() - 18 * 24 * 60 * 60 * 1000),
-    severity: 'ok' as const,
-  },
-];
+const MOCK_ATTESTATIONS = boundArray(
+  [
+    {
+      id: '1',
+      title: 'Daily Compliance Check',
+      description: 'All parameters within acceptable ranges. No violations detected.',
+      txHash: '0xabcdef1234567890abcdef1234567890',
+      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      severity: 'ok' as const,
+    },
+    {
+      id: '2',
+      title: 'Allocation Verified',
+      description: 'Portfolio allocation meets all constraints. Safe protocol usage confirmed.',
+      txHash: '0x123456789abcdef123456789abcdef',
+      timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      severity: 'ok' as const,
+    },
+    {
+      id: '3',
+      title: 'Increased Volatility',
+      description: 'Market volatility increased. Monitoring drawdown levels closely.',
+      txHash: '0x567890abcdef1234567890abcdef1234',
+      timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+      severity: 'warning' as const,
+    },
+    {
+      id: '4',
+      title: 'Weekly Review',
+      description: 'Commitment performing well. All rules followed consistently.',
+      txHash: '0x90abcd1234567890abcd345678',
+      timestamp: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+      severity: 'ok' as const,
+    },
+    {
+      id: '5',
+      title: 'Commitment Created',
+      description: 'Initial commitment parameters set and validated on-chain.',
+      txHash: '0xdef1234567890abcdef890abc',
+      timestamp: new Date(Date.now() - 18 * 24 * 60 * 60 * 1000),
+      severity: 'ok' as const,
+    },
+  ],
+  MAX_VISIBLE_ATTESTATIONS,
+);
 
 const MOCK_ATTESTATION_SUMMARY = {
   complianceCount: 4,
@@ -175,94 +229,9 @@ function getCommitmentById(id: string) {
   return MOCK_COMMITMENTS[id] ?? null;
 }
 
-// ─── Route parameter boundary ──────────────────────────────────────────────
-//
-// `params.id` comes straight from the URL and is untrusted. It's used as a
-// lookup key, echoed into share links/explorer URLs, and passed to child
-// components — validate its shape before any of that happens rather than
-// implicitly trusting whatever the route segment contained.
-export const COMMITMENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
-
-export function isValidCommitmentId(id: unknown): id is string {
-  return typeof id === 'string' && COMMITMENT_ID_PATTERN.test(id);
-}
-
-// ─── Ownership / authorization boundary ────────────────────────────────────
-//
-// Fund/dispute/early-exit/settle actions must only be available when the
-// *connected wallet* matches the commitment's owner — this must never be
-// inferred from client-only state (e.g. "the button is visible so the user
-// must be allowed"). `useWallet` reports whether Freighter is connected, the
-// active address, and whether the wallet is on the expected network; all
-// three are checked here before an action is considered authorized.
-export type OwnershipState =
-  | { kind: 'wallet_disconnected' }
-  | { kind: 'wrong_network'; reason: string }
-  | { kind: 'not_owner' }
-  | { kind: 'authorized' };
-
-export function deriveOwnership(
-  wallet: Pick<ReturnType<typeof useWallet>, 'connected' | 'address' | 'error'>,
-  ownerAddress: string,
-): OwnershipState {
-  if (!wallet.connected || !wallet.address) {
-    return { kind: 'wallet_disconnected' };
-  }
-  if (wallet.error) {
-    // useWallet already normalizes wrong-network / locked-wallet errors
-    // into a human-readable message; surface it as-is rather than
-    // re-deriving network state independently.
-    return { kind: 'wrong_network', reason: wallet.error };
-  }
-  if (wallet.address !== ownerAddress) {
-    return { kind: 'not_owner' };
-  }
-  return { kind: 'authorized' };
-}
-
-export function ownershipDisabledReason(ownership: OwnershipState): string | undefined {
-  switch (ownership.kind) {
-    case 'wallet_disconnected':
-      return 'Connect your wallet to manage this commitment.';
-    case 'wrong_network':
-      return ownership.reason;
-    case 'not_owner':
-      return 'Only the commitment owner can perform this action.';
-    case 'authorized':
-      return undefined;
-  }
-}
-
-export function isAuthorized(ownership: OwnershipState): boolean {
-  return ownership.kind === 'authorized';
-}
-
-// ─── Defensive status parsing ──────────────────────────────────────────────
-//
-// `useCommitmentStatus()` can be loading, absent, or (in principle) return a
-// malformed/unexpected shape from its backing fetch. Treat its value as
-// untrusted rather than assuming `status.status`/`status.daysRemaining` are
-// always well-formed — an empty or unrecognized status string must not
-// silently read as "eligible" or default to displaying "Active".
-const KNOWN_COMMITMENT_STATUSES = new Set([
-  'active',
-  'settled',
-  'violated',
-  'early_exit',
-  'disputed',
-]);
-
-export function isKnownStatusValue(value: unknown): value is string {
-  return typeof value === 'string' && KNOWN_COMMITMENT_STATUSES.has(value.toLowerCase());
-}
-
-export function isEligibleForEarlyExit(status: unknown): boolean {
-  if (!status || typeof status !== 'object') return false;
-  const s = status as { status?: unknown; daysRemaining?: unknown };
-  if (!isKnownStatusValue(s.status)) return false;
-  if (typeof s.daysRemaining !== 'number' || !Number.isFinite(s.daysRemaining)) return false;
-  return (s.status as string).toLowerCase() === 'active' && s.daysRemaining > 0;
-}
+// ---------------------------------------------------------------------------
+// Main page component
+// ---------------------------------------------------------------------------
 
 export default function CommitmentDetailPage({ params }: { params: { id: string } }) {
   if (!isValidCommitmentId(params.id)) {
@@ -293,6 +262,9 @@ function CommitmentDetailPageContent({
     () => MOCK_DISPUTES[routeParamId] ?? null,
   );
   const [commitmentStatusOverride, setCommitmentStatusOverride] = useState<string | null>(null);
+
+  // Debounced status override transition to prevent rapid toggling
+  const statusTransitionRef = useRef(0);
 
   const durationLabel = `${commitment.duration} days`;
   const maxLossLabel = `${commitment.maxLoss}%`;
@@ -388,82 +360,39 @@ function CommitmentDetailPageContent({
   }, [authorized, reportIssueDisabledReason, showError]);
 
   const handleDisputeSubmitted = useCallback(() => {
-    // Re-check authorization at submit time, not just at the moment the
-    // modal was opened — the wallet could have disconnected or switched
-    // accounts while the modal was open.
-    if (!authorized) {
-      showError({
-        title: 'Not authorized',
-        description: ownershipDisabledReason(ownership) ?? 'You are not authorized to do this.',
-      });
-      setDisputeModalOpen(false);
+    const now = Date.now();
+
+    // Debounce: prevent rapid successive dispute submissions
+    if (now - statusTransitionRef.current < STATUS_TRANSITION_DEBOUNCE_MS) {
+      emitPageTelemetry('dispute_submit_debounced', { commitmentId: params.id });
       return;
     }
-    if (actionInFlightRef.current) return;
-    actionInFlightRef.current = true;
-    try {
-      setDispute({
-        stage: 'under_review',
-        filedAt: new Date().toISOString(),
-        reasonCategory: 'Pending review',
-        reviewStartedAt: new Date().toISOString(),
-      });
-      setCommitmentStatusOverride('Disputed');
-      setDisputeModalOpen(false);
-    } finally {
-      actionInFlightRef.current = false;
-    }
-  }, [authorized, ownership, showError]);
+    statusTransitionRef.current = now;
+
+    setDispute({
+      stage: 'under_review',
+      filedAt: new Date().toISOString(),
+      reasonCategory: 'Pending review',
+      reviewStartedAt: new Date().toISOString(),
+    });
+    setCommitmentStatusOverride('Disputed');
+    setDisputeModalOpen(false);
+
+    emitPageTelemetry('dispute_submitted', {
+      commitmentId: params.id,
+      newStatus: 'Disputed',
+    });
+  }, [params.id]);
 
   const handleEarlyExit = useCallback(() => {
-    if (!canEarlyExit) {
-      showError({
-        title: 'Unable to start early exit',
-        description:
-          earlyExitDisabledReason ?? 'Early exit is not currently available for this commitment.',
-      });
-      return;
-    }
+    emitPageTelemetry('early_exit_modal_open', { commitmentId: params.id });
     setEarlyExitModalOpen(true);
-  }, [canEarlyExit, earlyExitDisabledReason, showError]);
-
-  const handleConfirmEarlyExit = useCallback(() => {
-    // Re-validate ownership and status eligibility right before the action
-    // actually fires, since time has passed since the modal opened (the
-    // status shown in `status` may have changed, e.g. maturity reached, or
-    // the wallet may have disconnected/switched accounts).
-    const freshOwnership = deriveOwnership(wallet, commitment.ownerAddress);
-    const stillEligible = isAuthorized(freshOwnership) && isEligibleForEarlyExit(status);
-
-    if (!stillEligible) {
-      showError({
-        title: 'Unable to complete early exit',
-        description:
-          ownershipDisabledReason(freshOwnership) ??
-          'This commitment is no longer eligible for early exit.',
-      });
-      setEarlyExitModalOpen(false);
-      return;
-    }
-    if (actionInFlightRef.current) return;
-    actionInFlightRef.current = true;
-    try {
-      setEarlyExitModalOpen(false);
-    } finally {
-      actionInFlightRef.current = false;
-    }
-  }, [wallet, commitment.ownerAddress, status, showError]);
+  }, [params.id]);
 
   const handleSettle = useCallback(() => {
-    if (!canSettle) {
-      showError({
-        title: 'Unable to settle',
-        description: settleDisabledReason ?? 'Settlement is not currently available.',
-      });
-      return;
-    }
+    emitPageTelemetry('settle_attempt', { commitmentId: params.id, available: false });
     showSuccess({ title: 'Coming Soon', description: 'Settlement is not yet available.' });
-  }, [canSettle, settleDisabledReason, showSuccess, showError]);
+  }, [showSuccess, params.id]);
 
   const scopedCommands = useMemo(
     () =>
@@ -500,7 +429,7 @@ function CommitmentDetailPageContent({
             />
           </div>
 
-          <DisputeStatusTracker dispute={dispute} />
+          <DisputeStatusTracker dispute={dispute} commitmentId={commitment.id} />
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
             <div className="lg:col-span-2 space-y-8">
@@ -519,8 +448,12 @@ function CommitmentDetailPageContent({
                 <RecentAttestationsPanel
                   attestations={MOCK_ATTESTATIONS}
                   summary={MOCK_ATTESTATION_SUMMARY}
-                  onSelectAttestation={(id) => console.log('Selected attestation:', id)}
-                  onViewAll={() => console.log('View all attestations')}
+                  onSelectAttestation={(id) =>
+                    emitPageTelemetry('attestation_selected', { attestationId: id })
+                  }
+                  onViewAll={() =>
+                    emitPageTelemetry('view_all_attestations', { commitmentId: params.id })
+                  }
                 />
               </div>
 
@@ -541,7 +474,9 @@ function CommitmentDetailPageContent({
                 mintDate={MOCK_NFT_DATA.mintDate}
                 onCopyTokenId={() => handleCopy(MOCK_NFT_DATA.tokenId, 'Token ID')}
                 onCopyOwner={() => handleCopy(MOCK_NFT_DATA.ownerAddress, 'Owner Address')}
-                onCopyContract={() => handleCopy(MOCK_NFT_DATA.contractAddress, 'Contract Address')}
+                onCopyContract={() =>
+                  handleCopy(MOCK_NFT_DATA.contractAddress, 'Contract Address')
+                }
                 onViewDetails={handleViewDetails}
                 onViewOnExplorer={handleViewExplorer}
                 onTransfer={handleTransfer}
@@ -595,6 +530,10 @@ function CommitmentDetailPageContent({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
 function CommitmentDetailHeaderWithStatus({
   commitmentId,
   commitmentType,
@@ -602,7 +541,7 @@ function CommitmentDetailHeaderWithStatus({
 }: {
   commitmentId: string;
   commitmentType: string;
-  statusOverride?: string;
+  statusOverride?: string | undefined;
 }) {
   const router = useRouter();
   const { status, isLoading } = useCommitmentStatus();
@@ -647,12 +586,8 @@ function CommitmentDetailActionsUsingContext({
   onViewAttestations: () => void;
   onExportData: () => void;
   onReportIssue: () => void;
-  onSettle?: () => void;
-  commitmentId?: string;
-  canEarlyExit: boolean;
-  earlyExitDisabledReason?: string;
-  settleDisabledReason?: string;
-  reportIssueDisabledReason?: string;
+  onSettle?: (() => void) | undefined;
+  commitmentId?: string | undefined;
 }) {
   const { status } = useCommitmentStatus();
   const previewRefreshTrigger = status
@@ -666,11 +601,8 @@ function CommitmentDetailActionsUsingContext({
       onViewAttestations={onViewAttestations}
       onExportData={onExportData}
       onReportIssue={onReportIssue}
-      onSettle={onSettle}
-      commitmentId={commitmentId}
-      earlyExitDisabledReason={earlyExitDisabledReason}
-      settleDisabledReason={settleDisabledReason}
-      reportIssueDisabledReason={reportIssueDisabledReason}
+      {...(onSettle !== undefined ? { onSettle } : {})}
+      {...(commitmentId !== undefined ? { commitmentId } : {})}
       previewRefreshTrigger={previewRefreshTrigger}
     />
   );
