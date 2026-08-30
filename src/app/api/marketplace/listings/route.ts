@@ -7,6 +7,8 @@ import { ValidationError } from '@/lib/backend/errors';
 import { getClientIp } from '@/lib/backend/getClientIp';
 import { idempotencyService } from '@/lib/backend/idempotency';
 import { parseJsonWithLimit, JSON_BODY_LIMITS } from '@/lib/backend/jsonBodyLimit';
+import { MAX_PAGE_SIZE } from '@/lib/backend/pagination';
+import { checkRateLimit, getRateLimitWindowSeconds } from '@/lib/backend/rateLimit';
 import {
   getMarketplaceSortKeys,
   isMarketplaceSortBy,
@@ -63,6 +65,36 @@ function toMarketplaceCard(listing: MarketplacePublicListing) {
     maxLoss: `${listing.maxLoss}%`,
     price: `$${listing.price.toLocaleString()}`,
   };
+}
+
+function parseNumber(searchParams: URLSearchParams, key: string): number | undefined {
+  const raw = searchParams.get(key);
+  if (raw === null) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
+    throw new ValidationError(`Invalid '${key}' query param. Expected a number.`);
+  }
+  return parsed;
+}
+
+function parseInteger(
+  searchParams: URLSearchParams,
+  key: string,
+  defaultValue: number,
+  maxValue?: number,
+): number {
+  const raw = searchParams.get(key);
+  if (raw === null) return defaultValue;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1) {
+    throw new ValidationError(`Invalid '${key}' query param. Expected a positive integer.`);
+  }
+  if (maxValue !== undefined && parsed > maxValue) {
+    throw new ValidationError(
+      `Invalid '${key}' query param. Must be ${maxValue} or smaller to bound response size.`,
+    );
+  }
+  return parsed;
 }
 
 function parseType(searchParams: URLSearchParams): MarketplaceCommitmentType | undefined {
@@ -144,8 +176,8 @@ function parseQuery(searchParams: URLSearchParams): ParseResult {
     minAmount,
     maxAmount,
     sortBy,
-    page,
-    pageSize,
+    page: parseInteger(searchParams, 'page', 1),
+    pageSize: parseInteger(searchParams, 'pageSize', 10, MAX_PAGE_SIZE),
   };
 
   if (type !== undefined) result.type = type;

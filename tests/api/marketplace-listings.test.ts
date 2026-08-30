@@ -50,6 +50,7 @@ vi.mock('@/lib/backend/getClientIp', () => ({
 
 import { GET, POST } from '@/app/api/marketplace/listings/route';
 import type { NextRequest } from 'next/server';
+import { MAX_PAGE_SIZE } from '@/lib/backend/pagination';
 import { checkRateLimit } from '@/lib/backend/rateLimit';
 import { assertMutationCsrf } from '@/lib/backend/csrf';
 import { listMarketplaceListings, marketplaceService } from '@/lib/backend/services/marketplace';
@@ -132,6 +133,29 @@ describe('GET /api/marketplace/listings', () => {
     expect(result.data.success).toBe(true);
     expect(result.data.data.listings).toHaveLength(1);
     expect(result.data.data.cards).toHaveLength(1);
+  });
+
+  it('rejects a pageSize above MAX_PAGE_SIZE to bound response size', async () => {
+    const response = await mockGET(
+      createMockRequest(
+        `http://localhost:3000/api/marketplace/listings?pageSize=${MAX_PAGE_SIZE + 1}`,
+      ),
+      createMockRouteContext(),
+    );
+    const result = await parseResponse(response);
+    expect(result.status).toBe(400);
+    expect(result.data.success).toBe(false);
+    expect(result.data.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('accepts a pageSize within MAX_PAGE_SIZE', async () => {
+    const response = await mockGET(
+      createMockRequest(`http://localhost:3000/api/marketplace/listings?pageSize=${MAX_PAGE_SIZE}`),
+      createMockRouteContext(),
+    );
+    const result = await parseResponse(response);
+    expect(result.status).toBe(200);
+    expect(result.data.success).toBe(true);
   });
 });
 

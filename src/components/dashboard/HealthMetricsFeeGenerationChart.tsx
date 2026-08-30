@@ -15,6 +15,7 @@ import {
 
 import VolatilityExposureMeter from '../VolatilityExposureMeter/VolatilityExposureMeter';
 import type { CommitmentExposureResult } from '../../utils/exposure';
+import { downsampleSeries } from '../../utils/downsample';
 import {
   CHART_COLORS,
   CHART_GRID_PROPS,
@@ -74,16 +75,19 @@ const HealthMetricsFeeGenerationChartComponent: React.FC<HealthMetricsFeeGenerat
     [],
   );
 
+  // Bound the rendered point count so the bar-count cost stays flat.
+  const boundedData = useMemo(() => downsampleSeries(data), [data]);
+
   const barCells = useMemo(
-    () => safeData.map((_, index) => <Cell key={`cell-${index}`} filter="url(#feeBarGlow)" />),
-    [safeData],
+    () => boundedData.map((_, index) => <Cell key={`cell-${index}`} filter="url(#feeBarGlow)" />),
+    [boundedData],
   );
 
   return (
     <>
       <div className="w-full h-full min-h-[350px] bg-[#111] rounded-xl p-4 sm:p-6 border border-[#222] shadow-[inset_0_1px_1px_rgba(255,255,255,0.03)]">
         <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={safeData} margin={CHART_MARGIN_DEFAULT} barCategoryGap="20%">
+          <BarChart data={boundedData} margin={CHART_MARGIN_DEFAULT} barCategoryGap="20%">
             <defs>
               <linearGradient id="feeBarGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={CHART_COLORS.teal} stopOpacity={1} />
