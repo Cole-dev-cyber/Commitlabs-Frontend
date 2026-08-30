@@ -7,8 +7,8 @@ import { ValidationError } from '@/lib/backend/errors';
 import { getClientIp } from '@/lib/backend/getClientIp';
 import { idempotencyService } from '@/lib/backend/idempotency';
 import { parseJsonWithLimit, JSON_BODY_LIMITS } from '@/lib/backend/jsonBodyLimit';
-import { MAX_PAGE_SIZE } from '@/lib/backend/pagination';
-import { checkRateLimit, getRateLimitWindowSeconds } from '@/lib/backend/rateLimit';
+import { checkRateLimit } from '@/lib/backend/rateLimit';
+import { requireAuth } from '@/lib/backend/requireAuth';
 import {
   getMarketplaceSortKeys,
   isMarketplaceSortBy,
@@ -214,44 +214,19 @@ export const GET = withApiHandler(
       const filters = parseQuery(searchParams);
       const listings = await listMarketplaceListings(filters);
 
-      const response = ok(
-        {
-          listings,
-          cards: listings.map(toMarketplaceCard),
-          total: listings.length,
-        },
-        undefined,
-        200,
-        correlationId,
-      );
-      response.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=30');
-      emitMarketplaceTelemetry({
-        event: 'marketplace.listings.get.success',
-        correlationId,
-        method: 'GET',
-        path: '/api/marketplace/listings',
-        statusCode: 200,
-        latencyMs: Date.now() - startedAt,
-        page: filters.page,
-        pageSize: filters.pageSize,
-      });
-      return response;
-    } catch (error) {
-      const err = error as { code?: string; status?: number };
-      emitMarketplaceTelemetry({
-        event: 'marketplace.listings.get.failed',
-        correlationId,
-        method: 'GET',
-        path: '/api/marketplace/listings',
-        errorCode: err.code,
-        statusCode: err.status ?? 500,
-        latencyMs: Date.now() - startedAt,
-      });
-      throw error;
-    }
-  },
-  { cors: MARKETPLACE_LISTINGS_CORS_POLICY, enableETag: true },
-);
+export const POST = withApiHandler(async (req: NextRequest, _context, correlationId) => {
+  // Authentication required for listing creation
+  const authReq = requireAuth(req);
+  const sellerAddress = authReq.user.address;
+
+  // Rate-limit write operations per authenticated user
+  if (!(await checkRateLimit(sellerAddress, 'api/marketplace/listings/create'))) {
+    throw new TooManyRequestsError();
+  }
+
+  const body = await parseJsonWithLimit(req, {
+    limitBytes: JSON_BODY_LIMITS.marketplaceListingsCreate,
+  });
 
 export const POST = withApiHandler(
   async (req: NextRequest, _context, correlationId) => {
@@ -270,49 +245,23 @@ export const POST = withApiHandler(
         );
       }
 
-      assertMutationCsrf(req);
+  const request = body as CreateListingRequest;
 
-      const ip = getClientIp(req);
-      await enforceMarketplaceRateLimit(ip, MARKETPLACE_RATE_LIMIT_ACTIONS.CREATE);
+  // Enforce that the authenticated caller is the declared seller
+  if (request.sellerAddress && request.sellerAddress !== sellerAddress) {
+    throw new ValidationError('sellerAddress must match the authenticated caller.');
+  }
 
-      const body = await parseJsonWithLimit(req, {
-        limitBytes: JSON_BODY_LIMITS.marketplaceListingsCreate,
-      });
+  // Fill in sellerAddress from session when not provided in body
+  const enrichedRequest: CreateListingRequest = {
+    ...request,
+    sellerAddress: request.sellerAddress ?? sellerAddress,
+  };
 
-      if (!body || typeof body !== 'object') {
-        throw new ValidationError('Request body must be an object');
-      }
-
-      const request = body as CreateListingRequest;
-      const listing = await marketplaceService.createListing(request);
-      const response: CreateListingResponse = { listing };
-      const apiResponse = ok(response, undefined, 201, correlationId);
-      apiResponse.headers.set('Cache-Control', 'no-store');
-      emitMarketplaceTelemetry({
-        event: 'marketplace.listings.post.success',
-        correlationId,
-        method: 'POST',
-        path: '/api/marketplace/listings',
-        statusCode: 201,
-        latencyMs: Date.now() - startedAt,
-      });
-      return apiResponse;
-    } catch (error) {
-      const err = error as { code?: string; status?: number };
-      emitMarketplaceTelemetry({
-        event: 'marketplace.listings.post.failed',
-        correlationId,
-        method: 'POST',
-        path: '/api/marketplace/listings',
-        errorCode: err.code,
-        statusCode: err.status ?? 500,
-        latencyMs: Date.now() - startedAt,
-      });
-      throw error;
-    }
-  },
-  { cors: MARKETPLACE_LISTINGS_CORS_POLICY },
-);
+  const listing = await marketplaceService.createListing(enrichedRequest);
+  const response: CreateListingResponse = { listing };
+  return ok(response, undefined, 201, correlationId);
+}, { cors: MARKETPLACE_LISTINGS_CORS_POLICY });
 
 const _405 = methodNotAllowed(['GET', 'POST']);
 export { _405 as PUT, _405 as PATCH, _405 as DELETE };
