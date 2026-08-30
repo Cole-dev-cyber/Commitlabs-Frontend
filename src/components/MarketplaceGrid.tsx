@@ -11,7 +11,9 @@ export interface MarketplaceGridProps {
   isCompareFull?: boolean;
   onCompareToggle?: (listing: MarketplaceCardProps) => void;
   onView?: (id: string) => void;
-  queryParams?: Record<string, any>;
+  /** Additional query parameters for filtering/sorting */
+  queryParams?: Record<string, unknown>;
+  /** Optional comparator applied before rendering. Stabilize with useCallback. */
   sortFn?: (a: MarketplaceCardProps, b: MarketplaceCardProps) => number;
   filterFn?: (item: MarketplaceCardProps) => boolean;
   onStateChange?: (state: ListingsFetchState) => void;
@@ -71,39 +73,77 @@ export const MarketplaceGrid = memo(function MarketplaceGrid({
   filterFn,
   onStateChange,
 }: MarketplaceGridProps) {
-  const {
-    listings: hookListings,
-    isLoading,
-    isLoadingInitial,
-    isLoadingMore,
-    isRefreshing,
-    state,
-    hasMore,
-    loadMore,
-    refresh,
-    error,
-    retryCount,
-    generation,
-  } = usePaginatedListings(queryParams, 9, !!items);
+  const safeOnCompareToggle = useCallback(
+    (listing: MarketplaceCardProps) => {
+      if (typeof onCompareToggle === 'function') {
+        return onCompareToggle(listing);
+      }
+    },
+    [onCompareToggle],
+  );
 
-  const rawItems = items ?? hookListings;
-  const generationRef = useRef(generation);
-  generationRef.current = generation;
+  const safeOnView = useCallback(
+    (id: string) => {
+      if (typeof onView === 'function' && id && typeof id === 'string') {
+        return onView(id);
+      }
+    },
+    [onView],
+  );
 
-  useEffect(() => {
-    onStateChange?.(state);
-  }, [state, onStateChange]);
+  const safeIsComparePinned = useCallback(
+    (id: string) => {
+      if (typeof isComparePinned === 'function' && id) {
+        return isComparePinned(id);
+      }
+      return false;
+    },
+    [isComparePinned],
+  );
 
+  // Use the pagination hook when no items are supplied.
+  // We disable the hook when pre-loaded items are supplied.
+  const { listings, isLoading, hasMore, loadMore } = usePaginatedListings(queryParams, 9, !!items);
+  const rawItems = items ?? listings;
+
+  const sanitizedItems = useMemo(() => {
+    if (!Array.isArray(rawItems)) return [];
+    return rawItems.filter((item): item is MarketplaceCardProps => {
+      return (
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.id === 'string' &&
+        item.id.trim().length > 0 &&
+        typeof item.type === 'string' &&
+        ['Safe', 'Balanced', 'Aggressive'].includes(item.type) &&
+        typeof item.amount === 'string' &&
+        typeof item.duration === 'string' &&
+        typeof item.yield === 'string' &&
+        typeof item.maxLoss === 'string' &&
+        typeof item.price === 'string'
+      );
+    });
+  }, [rawItems]);
+
+  // Memoize derived list — only recomputes when items / predicates change.
   const displayedItems = useMemo(() => {
-    let result = rawItems;
+    let result = sanitizedItems;
     if (filterFn) {
-      result = result.filter(filterFn);
+      try {
+        result = result.filter(filterFn);
+      } catch {
+        result = [];
+      }
     }
     if (sortFn) {
-      result = [...result].sort(sortFn);
+      try {
+        result = [...result].sort(sortFn);
+      } catch {
+        result = [];
+      }
     }
     return result;
-  }, [rawItems, filterFn, sortFn]);
+  }, [sanitizedItems, filterFn, sortFn]);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadMoreInFlightRef = useRef(false);
@@ -252,7 +292,7 @@ export const MarketplaceGrid = memo(function MarketplaceGrid({
         role="list"
       >
         {displayedItems.map((item) => {
-          const compareSelected = isComparePinned?.(item.id) ?? false;
+          const compareSelected = safeIsComparePinned(item.id);
           return (
             <li
               key={item.id}
@@ -268,8 +308,8 @@ export const MarketplaceGrid = memo(function MarketplaceGrid({
                 {...item}
                 compareSelected={compareSelected}
                 compareDisabled={isCompareFull && !compareSelected}
-                onCompareToggle={onCompareToggle ? () => onCompareToggle(item) : undefined}
-                onView={onView}
+                {...(onCompareToggle ? { onCompareToggle: () => safeOnCompareToggle(item) } : {})}
+                onView={safeOnView}
               />
             </li>
           );

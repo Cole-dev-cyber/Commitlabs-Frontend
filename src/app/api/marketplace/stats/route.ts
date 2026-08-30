@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ok, fail, getCorrelationId } from '@/lib/backend/apiResponse';
+import { z } from 'zod';
+import { ok, fail, methodNotAllowed } from '@/lib/backend/apiResponse';
 import { isFeatureEnabled } from '@/lib/backend/config';
-import { TooManyRequestsError, ServiceUnavailableError } from '@/lib/backend/errors';
-import { checkRateLimit } from '@/lib/backend/rateLimit';
+import { TooManyRequestsError, UnauthorizedError, InternalError, ServiceUnavailableError } from '@/lib/backend/errors';
+import { checkRateLimit, getRateLimitWindowSeconds } from '@/lib/backend/rateLimit';
+import { verifySessionToken } from '@/lib/backend/auth';
 import { withApiHandler } from '@/lib/backend/withApiHandler';
 import { marketplaceService, getStatsGeneration } from '@/lib/backend/services/marketplace';
 import { cache } from '@/lib/backend/cache/factory';
@@ -17,253 +19,160 @@ import {
 } from '@/lib/backend/cache/index';
 import { generateETag, etagMatches } from '@/lib/backend/etag';
 
-export type StatsResponseFreshnessFlag =
-  | 'FRESH'
-  | 'STALE_WHILE_REVALIDATE'
-  | 'STALE_IF_ERROR'
-  | 'EMPTY'
-  | 'REVALIDATING_LOCK';
+type MarketplaceStats = z.infer<typeof MarketplaceStatsSchema>;
 
-export interface StatsResponseMeta {
-  freshness: StatsResponseFreshnessFlag;
-  ageSeconds: number;
-  generation: number;
-  lastValidGeneration: number;
-  cacheHit: boolean;
-  state: string;
-  fetchedAtIso: string;
-  expiresAtIso: string;
-  sourceCorrelationId?: string;
-  errorCode?: string;
-  retryable?: boolean;
-  retryAfterSeconds?: number;
-}
+const MarketplaceStatsSchema = z.object({
+  activeListings: z.number().int().nonnegative(),
+  averageYield: z.number().finite().nonnegative(),
+  medianPrice: z.number().finite().nonnegative(),
+  typeBreakdown: z.object({
+    Safe: z.number().int().nonnegative(),
+    Balanced: z.number().int().nonnegative(),
+    Aggressive: z.number().int().nonnegative(),
+  }),
+});
 
-const MAX_FRESHNESS_AGE_SECONDS = CacheTTL.MARKETPLACE_STATS;
-const SWR_STALE_AGE_SECONDS = CacheTTL.MARKETPLACE_STATS_STALE_GRACE;
+/**
+ * Validates an optional bearer token. If present, it must be a valid session
+ * token. If absent, the request is treated as unauthenticated public access.
+ *
+ * This enforces the authorization boundary: any client claiming a wallet
+ * identity must prove it, preventing tampered or replayed tokens from
+ * bypassing downstream checks.
+ */
+function validateOptionalWalletAuth(req: NextRequest): void {
+  const authHeader = req.headers.get('authorization');
+  if (!authHeader) return;
 
-function classifyFreshness(envelope: MarketplaceStatsEnvelope): StatsResponseFreshnessFlag {
-  if (envelope.state === 'EMPTY') return 'EMPTY';
-  if (envelope.state === 'ERROR') return 'STALE_IF_ERROR';
-  if (envelope.state === 'REVALIDATING') return 'REVALIDATING_LOCK';
-  const age = envelopeFreshnessAgeSeconds(envelope);
-  if (age <= MAX_FRESHNESS_AGE_SECONDS && !envelopeIsExpired(envelope)) return 'FRESH';
-  return 'STALE_WHILE_REVALIDATE';
-}
-
-function buildMeta(envelope: MarketplaceStatsEnvelope, cacheHit: boolean): StatsResponseMeta {
-  return {
-    freshness: classifyFreshness(envelope),
-    ageSeconds: envelopeFreshnessAgeSeconds(envelope),
-    generation: envelope.generation,
-    lastValidGeneration: envelope.lastValidGeneration,
-    cacheHit,
-    state: envelope.state,
-    fetchedAtIso: new Date(envelope.fetchedAt).toISOString(),
-    expiresAtIso: new Date(envelope.expiresAt).toISOString(),
-    sourceCorrelationId: envelope.sourceCorrelationId,
-    errorCode: envelope.errorCode,
-    retryable: envelope.retryable,
-    retryAfterSeconds: envelope.retryAfterSeconds,
-  };
-}
-
-function sMaxAgeFromMeta(meta: StatsResponseMeta): number {
-  if (meta.freshness === 'FRESH') {
-    return Math.max(0, MAX_FRESHNESS_AGE_SECONDS - meta.ageSeconds);
+  if (!authHeader.startsWith('Bearer ')) {
+    throw new UnauthorizedError('Authorization header must be in format: Bearer <token>');
   }
-  if (meta.freshness === 'STALE_WHILE_REVALIDATE') return 0;
-  if (meta.freshness === 'STALE_IF_ERROR') return 0;
-  if (meta.freshness === 'REVALIDATING_LOCK') return 0;
-  return 0;
-}
 
-function buildCacheControlHeader(meta: StatsResponseMeta): string {
-  const sMax = sMaxAgeFromMeta(meta);
-  const swr = SWR_STALE_AGE_SECONDS;
-  const staleIfError = Math.max(0, SWR_STALE_AGE_SECONDS);
-  return `public, s-maxage=${sMax}, stale-while-revalidate=${swr}, stale-if-error=${staleIfError}`;
-}
+  const token = authHeader.slice(7);
+  const session = verifySessionToken(token);
 
-function validateInvariants(
-  envelope: MarketplaceStatsEnvelope,
-  correlationId: string,
-): void {
-  if (!isStatsEnvelope(envelope)) {
-    throw new Error(`[INV-1 ${correlationId}] Envelope failed structural validation`);
-  }
-  if (envelope.generation < envelope.lastValidGeneration) {
-    throw new Error(`[INV-2 ${correlationId}] generation < lastValidGeneration`);
-  }
-  if (envelope.state === 'FRESH' && envelopeIsExpired(envelope)) {
-    throw new Error(`[INV-3 ${correlationId}] FRESH envelope is past expiresAt`);
-  }
-  const typeSum =
-    envelope.payload.typeBreakdown.Safe +
-    envelope.payload.typeBreakdown.Balanced +
-    envelope.payload.typeBreakdown.Aggressive;
-  if (
-    envelope.payload.activeListings > 0 &&
-    typeSum !== envelope.payload.activeListings &&
-    (envelope.payload.activeListings !== 0 || typeSum !== 0)
-  ) {
-    // Non-fatal for now — in strict environments this would throw.
-    // Logging would be appropriate here.
-  }
-  if (envelope.payload.averageYield < 0) {
-    throw new Error(`[INV-PAYLOAD ${correlationId}] negative averageYield`);
-  }
-  if (envelope.payload.medianPrice < 0) {
-    throw new Error(`[INV-PAYLOAD ${correlationId}] negative medianPrice`);
+  if (!session.valid || !session.address) {
+    throw new UnauthorizedError('Invalid or expired session token.');
   }
 }
 
-export const GET = withApiHandler(
-  async (req: NextRequest, _ctx, correlationId: string) => {
-    if (!isFeatureEnabled('marketplace')) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'NOT_FOUND',
-            message: 'Marketplace feature is disabled.',
-            details: { feature: 'marketplace' },
-            correlationId,
-            timestamp: new Date().toISOString(),
-          },
-        },
-        { status: 404 },
-      );
-    }
+/**
+ * Validates the numeric invariants of marketplace stats after aggregation.
+ *
+ * Rejects adversarial inputs such as NaN, Infinity, or negative values that
+ * could corrupt downstream UI or analytics.
+ */
+function validateStatsData(data: unknown): MarketplaceStats {
+  const parsed = MarketplaceStatsSchema.parse(data);
 
-    const ip = req.ip ?? req.headers.get('x-forwarded-for') ?? 'anonymous';
-    const isAllowed = await checkRateLimit(ip, 'api/marketplace/stats');
+  const totalFromBreakdown =
+    parsed.typeBreakdown.Safe + parsed.typeBreakdown.Balanced + parsed.typeBreakdown.Aggressive;
 
-    if (!isAllowed) {
-      throw new TooManyRequestsError();
-    }
-
-    const ifNoneMatch = req.headers.get('if-none-match');
-    const statsGenerationAtEntry = await getStatsGeneration();
-
-    let envelope: MarketplaceStatsEnvelope;
-    let cacheHitBase = false;
-
-    try {
-      envelope = await marketplaceService.getMarketplaceStatsEnvelope(correlationId);
-    } catch (upstreamErr: unknown) {
-      const cacheKey = CacheKey.marketplaceStats();
-      const cachedFallbackRaw = await cache.get<unknown>(cacheKey);
-      const cachedFallback = isStatsEnvelope(cachedFallbackRaw) ? cachedFallbackRaw : null;
-
-      if (cachedFallback && envelopeCanServeStale(cachedFallback)) {
-        envelope = {
-          ...cachedFallback,
-          state: 'ERROR',
-          errorCode: upstreamErr instanceof Error ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_ERROR',
-          errorMessage:
-            upstreamErr instanceof Error ? upstreamErr.message : 'Unexpected stats error',
-          retryable: true,
-          retryAfterSeconds: 30,
-        };
-      } else {
-        throw new ServiceUnavailableError(
-          'Marketplace stats are temporarily unavailable. Please try again later.',
-          { reason: upstreamErr instanceof Error ? upstreamErr.message : String(upstreamErr) },
-          30,
-        );
-      }
-    }
-
-    validateInvariants(envelope, correlationId);
-
-    const latestGeneration = await getStatsGeneration();
-    const cacheKey = CacheKey.marketplaceStats();
-    const rawAfter = await cache.get<unknown>(cacheKey);
-    cacheHitBase = isStatsEnvelope(rawAfter) && rawAfter.generation === envelope.generation;
-
-    if (envelope.state === 'ERROR' && envelope.retryable) {
-      const meta = buildMeta(envelope, cacheHitBase);
-      const retryAfter = envelope.retryAfterSeconds ?? 30;
-      const staleRsp = ok(envelope.payload, {
-        meta: {
-          ...meta,
-          note: 'Served from stale cache; upstream stats compute failed.',
-          requestedGeneration: statsGenerationAtEntry,
-          servedGeneration: latestGeneration,
-        },
-      } as any);
-      staleRsp.headers.set('Cache-Control', buildCacheControlHeader(meta));
-      staleRsp.headers.set('X-Cache', cacheHitBase ? 'HIT_STALE_ERROR' : 'MISS_STALE_ERROR');
-      staleRsp.headers.set('X-Stats-State', envelope.state);
-      staleRsp.headers.set('X-Stats-Generation', String(envelope.generation));
-      staleRsp.headers.set('Retry-After', String(retryAfter));
-      return staleRsp;
-    }
-
-    if (envelope.state === 'EMPTY') {
-      const meta = buildMeta(envelope, cacheHitBase);
-      const emptyRsp = ok(envelope.payload, {
-        meta: {
-          ...meta,
-          note: 'No marketplace listings yet.',
-          requestedGeneration: statsGenerationAtEntry,
-          servedGeneration: latestGeneration,
-        },
-      } as any);
-      emptyRsp.headers.set('Cache-Control', `public, s-maxage=5, stale-while-revalidate=${SWR_STALE_AGE_SECONDS}`);
-      emptyRsp.headers.set('X-Cache', 'MISS_EMPTY');
-      emptyRsp.headers.set('X-Stats-State', 'EMPTY');
-      emptyRsp.headers.set('X-Stats-Generation', String(envelope.generation));
-      return emptyRsp;
-    }
-
-    const etag = generateETag({
-      payload: envelope.payload,
-      generation: envelope.lastValidGeneration,
-      version: 1,
-    });
-
-    if (etagMatches(ifNoneMatch, etag)) {
-      const notModified = new NextResponse(null, { status: 304 });
-      notModified.headers.set('ETag', etag);
-      notModified.headers.set(
-        'Cache-Control',
-        `public, max-age=0, must-revalidate, s-maxage=${Math.max(0, MAX_FRESHNESS_AGE_SECONDS - envelopeFreshnessAgeSeconds(envelope))}`,
-      );
-      notModified.headers.set('X-Stats-Generation', String(envelope.generation));
-      notModified.headers.set('X-Stats-State', envelope.state);
-      return notModified;
-    }
-
-    const meta = buildMeta(envelope, cacheHitBase);
-    const response = ok(envelope.payload, {
-      meta: {
-        ...meta,
-        requestedGeneration: statsGenerationAtEntry,
-        servedGeneration: latestGeneration,
+  if (totalFromBreakdown > parsed.activeListings) {
+    throw new InternalError(
+      'Marketplace stats invariant failed: type breakdown exceeds active listings.',
+      {
+        activeListings: parsed.activeListings,
+        typeBreakdownTotal: totalFromBreakdown,
       },
-    } as any);
-
-    response.headers.set('ETag', etag);
-    response.headers.set('Cache-Control', buildCacheControlHeader(meta));
-    response.headers.set(
-      'X-Cache',
-      meta.freshness === 'FRESH' && cacheHitBase ? 'HIT' : cacheHitBase ? 'HIT_STALE' : 'MISS',
     );
     response.headers.set('X-Stats-State', envelope.state);
     response.headers.set('X-Stats-Generation', String(envelope.generation));
     response.headers.set('X-Stats-LastValid-Generation', String(envelope.lastValidGeneration));
     response.headers.set('X-Stats-Age', String(meta.ageSeconds));
 
+  return parsed;
+}
+
+export const GET = withApiHandler(
+  async (req: NextRequest, _context, correlationId) => {
+    if (!isFeatureEnabled('marketplace')) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Marketplace feature is disabled.',
+            details: { feature: 'marketplace' },
+          },
+        },
+        { status: 404 },
+      );
+    }
+
+    try {
+      validateOptionalWalletAuth(req);
+    } catch (error) {
+      throw error;
+    }
+
+    const ip = req.ip ?? req.headers.get('x-forwarded-for') ?? 'anonymous';
+    const isAllowed = await checkRateLimit(ip, 'api/marketplace/stats');
+
+    if (!isAllowed) {
+      throw new TooManyRequestsError(
+        'Rate limit exceeded for marketplace stats.',
+        undefined,
+        getRateLimitWindowSeconds('api/marketplace/stats'),
+      );
+    }
+
+    const cacheKey = CacheKey.marketplaceStats();
+
+    const cached = await cache.get<MarketplaceStats>(cacheKey);
+    if (cached) {
+      try {
+        validateStatsData(cached);
+        const response = ok(cached);
+        response.headers.set('X-Cache', 'HIT');
+        response.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=30');
+        response.headers.set('X-Cache-Freshness', 'cached');
+        return response;
+      } catch {
+        await cache.delete(cacheKey);
+      }
+    }
+
+    let stats: unknown;
+    try {
+      stats = await marketplaceService.getMarketplaceStats();
+    } catch (error) {
+      throw new ServiceUnavailableError(
+        'Failed to compute marketplace statistics.',
+        { cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
+
+    let validatedStats: MarketplaceStats;
+    try {
+      validatedStats = validateStatsData(stats);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return fail(
+          'INTERNAL_ERROR',
+          'Marketplace statistics returned malformed data.',
+          { validationErrors: error.issues.map((e) => e.message) },
+          500,
+          correlationId,
+        );
+      }
+      if (error instanceof InternalError) {
+        return fail(error.code, error.message, error.details, error.statusCode, correlationId);
+      }
+      throw error;
+    }
+
+    await cache.set(cacheKey, validatedStats, CacheTTL.MARKETPLACE_STATS);
+
+    const response = ok(validatedStats);
+    response.headers.set('X-Cache', 'MISS');
+    response.headers.set('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=30');
+    response.headers.set('X-Cache-Freshness', 'fresh');
+    response.headers.set('X-Cache-TTL', String(CacheTTL.MARKETPLACE_STATS));
+
     return response;
   },
-  {
-    cors: {
-      allowOrigin: '*',
-      allowMethods: ['GET', 'HEAD', 'OPTIONS'],
-      allowHeaders: ['Content-Type', 'Authorization', 'If-None-Match', 'X-CSRF-Token'],
-      maxAge: 600,
-    },
-  },
+  { enableETag: true, cachePrivacy: 'public' },
 );
+
+const _405 = methodNotAllowed(['GET']);
+export { _405 as POST, _405 as PUT, _405 as PATCH, _405 as DELETE };
