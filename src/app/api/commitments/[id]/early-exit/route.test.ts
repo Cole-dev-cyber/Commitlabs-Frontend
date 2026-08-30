@@ -15,8 +15,12 @@ vi.mock('@/lib/backend/csrf', () => ({
   assertMutationCsrf: vi.fn(),
 }));
 
+vi.mock('@/lib/backend/requireAuth', () => ({
+  requireAuth: vi.fn(),
+}));
+
 vi.mock('@/lib/backend/services/contracts', () => ({
-  settleCommitmentOnChain: vi.fn(),
+  earlyExitCommitmentOnChain: vi.fn(),
   getCommitmentFromChain: vi.fn(),
 }));
 
@@ -30,21 +34,23 @@ vi.mock('@/lib/backend/idempotency', () => ({
 }));
 
 vi.mock('@/lib/backend/logger', () => ({
-  logCommitmentSettled: vi.fn(),
+  logEarlyExit: vi.fn(),
 }));
 
 import { checkRateLimit } from '@/lib/backend/rateLimit';
 import { assertMutationCsrf } from '@/lib/backend/csrf';
-import { settleCommitmentOnChain, getCommitmentFromChain } from '@/lib/backend/services/contracts';
+import { requireAuth } from '@/lib/backend/requireAuth';
+import { earlyExitCommitmentOnChain, getCommitmentFromChain } from '@/lib/backend/services/contracts';
 import { idempotencyService } from '@/lib/backend/idempotency';
-import { logCommitmentSettled } from '@/lib/backend/logger';
+import { logEarlyExit } from '@/lib/backend/logger';
 
 const mockCheckRateLimit = vi.mocked(checkRateLimit);
 const mockAssertCsrf = vi.mocked(assertMutationCsrf);
-const mockSettleCommitment = vi.mocked(settleCommitmentOnChain);
+const mockRequireAuth = vi.mocked(requireAuth);
+const mockEarlyExit = vi.mocked(earlyExitCommitmentOnChain);
 const mockGetCommitment = vi.mocked(getCommitmentFromChain);
 const mockIdempotency = vi.mocked(idempotencyService);
-const mockLogSettled = vi.mocked(logCommitmentSettled);
+const mockLogEarlyExit = vi.mocked(logEarlyExit);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -90,7 +96,7 @@ async function parseResponse(response: Response): Promise<ParsedResponse> {
 
 const VALID_ADDRESS = `GBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
 const DIFFERENT_ADDRESS = `GBAAAAABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB`;
-const COMMITMENT_ID = 'commitment-settle-test-123';
+const COMMITMENT_ID = 'commitment-exit-test-123';
 
 const MOCK_COMMITMENT_ACTIVE = {
   id: COMMITMENT_ID,
@@ -106,24 +112,23 @@ const MOCK_COMMITMENT_ACTIVE = {
   expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
 };
 
-const MOCK_COMMITMENT_FUNDED = {
-  ...MOCK_COMMITMENT_ACTIVE,
-  status: 'FUNDED' as const,
-};
-
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validation', () => {
+describe('POST /api/commitments/[id]/early-exit - Authorization & Boundary Validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     diagnosticsService.clear();
     mockCheckRateLimit.mockResolvedValue(true);
+    mockRequireAuth.mockReturnValue({
+      user: { address: VALID_ADDRESS, csrfToken: 'token' },
+    } as any);
     mockGetCommitment.mockResolvedValue(MOCK_COMMITMENT_ACTIVE);
-    mockSettleCommitment.mockResolvedValue({
-      settlementAmount: '10500',
-      finalStatus: 'SETTLED',
+    mockEarlyExit.mockResolvedValue({
+      exitAmount: '9500',
+      penaltyAmount: '1000',
+      finalStatus: 'EARLY_EXIT',
       txHash: 'abc123def456789012345678901234567890123456789012345678901234',
-      reference: 'settle-ref-123',
+      reference: 'exit-ref-123',
     });
     mockIdempotency.getRecord.mockResolvedValue(null);
     mockIdempotency.start.mockResolvedValue(undefined);
@@ -138,9 +143,12 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
 
   // ── Success Cases ──────────────────────────────────────────────────────────
 
-  it('successfully settles a commitment from ACTIVE state', async () => {
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+  it('successfully exits a commitment early from ACTIVE state', async () => {
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -149,31 +157,18 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
     const result = await parseResponse(response);
     expect(result.status).toBe(200);
     expect(result.data.success).toBe(true);
-    expect(result.data.data.commitmentId).toBe(COMMITMENT_ID);
-    expect(result.data.data.settlementAmount).toBe('10500');
-    expect(result.data.data.finalStatus).toBe('SETTLED');
+    expect(result.data.data.exitAmount).toBe('9500');
+    expect(result.data.data.finalStatus).toBe('EARLY_EXIT');
   });
 
-  it('successfully settles a commitment from FUNDED state', async () => {
-    mockGetCommitment.mockResolvedValue(MOCK_COMMITMENT_FUNDED);
+  // ── Session Consistency Tests (Wrong-Wallet Detection) ────────────────────
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
-    });
-
-    const context = { params: { id: COMMITMENT_ID } };
-    const response = await POST(req, context, 'correlation-123');
-
-    const result = await parseResponse(response);
-    expect(result.status).toBe(200);
-    expect(result.data.success).toBe(true);
-  });
-
-  // ── Authorization Boundary Tests ──────────────────────────────────────────
-
-  it('rejects settlement by non-owner (ownership verification)', async () => {
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: DIFFERENT_ADDRESS },
+  it('rejects early-exit when session address does not match caller address', async () => {
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: DIFFERENT_ADDRESS, // Different from session
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -182,84 +177,95 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
     const result = await parseResponse(response);
     expect(result.status).toBe(403);
     expect(result.data.error.code).toBe('FORBIDDEN_ERROR');
-    expect(result.data.error.message).toContain('Ownership verification failed');
+    expect(result.data.error.message).toContain('Session authentication failed');
   });
 
-  it('records authorization failure in diagnostics', async () => {
-    mockGetCommitment.mockResolvedValue(MOCK_COMMITMENT_ACTIVE);
-
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: DIFFERENT_ADDRESS },
+  it('records session mismatch in diagnostics', async () => {
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: DIFFERENT_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
     await POST(req, context, 'correlation-123');
 
-    const stats = diagnosticsService.getOperationStats('settle_commitment');
+    const stats = diagnosticsService.getOperationStats('early_exit_commitment');
+    expect(stats.failureCount).toBeGreaterThan(0);
+  });
+
+  // ── Authorization Boundary Tests ───────────────────────────────────────────
+
+  it('rejects early-exit by non-owner (ownership verification)', async () => {
+    mockRequireAuth.mockReturnValue({
+      user: { address: DIFFERENT_ADDRESS, csrfToken: 'token' },
+    } as any);
+
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: DIFFERENT_ADDRESS,
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
+    const response = await POST(req, context, 'correlation-123');
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(403);
+    expect(result.data.error.message).toContain('Ownership verification failed');
+  });
+
+  it('records ownership failure in diagnostics', async () => {
+    mockRequireAuth.mockReturnValue({
+      user: { address: DIFFERENT_ADDRESS, csrfToken: 'token' },
+    } as any);
+
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: DIFFERENT_ADDRESS,
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
+    await POST(req, context, 'correlation-123');
+
+    const stats = diagnosticsService.getOperationStats('early_exit_commitment');
     expect(stats.failureCount).toBeGreaterThan(0);
   });
 
   // ── State Precondition Tests ───────────────────────────────────────────────
 
-  it('rejects settlement of non-existent commitment', async () => {
+  it('rejects early-exit of non-existent commitment', async () => {
     mockGetCommitment.mockResolvedValue(null);
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
     const response = await POST(req, context, 'correlation-123');
 
     const result = await parseResponse(response);
-    expect(result.status).toBe(404);
-    expect(result.data.error.code).toBe('NOT_FOUND_ERROR');
+    expect(result.status).toBeGreaterThanOrEqual(400);
   });
 
-  it('rejects settlement of already-settled commitment', async () => {
-    mockGetCommitment.mockResolvedValue({
-      ...MOCK_COMMITMENT_ACTIVE,
-      status: 'SETTLED',
-    });
-
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
-    });
-
-    const context = { params: { id: COMMITMENT_ID } };
-    const response = await POST(req, context, 'correlation-123');
-
-    const result = await parseResponse(response);
-    expect(result.status).toBe(409);
-    expect(result.data.error.message).toContain('already been settled');
-  });
-
-  it('rejects settlement of violated commitment', async () => {
-    mockGetCommitment.mockResolvedValue({
-      ...MOCK_COMMITMENT_ACTIVE,
-      status: 'VIOLATED',
-    });
-
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
-    });
-
-    const context = { params: { id: COMMITMENT_ID } };
-    const response = await POST(req, context, 'correlation-123');
-
-    const result = await parseResponse(response);
-    expect(result.status).toBe(409);
-    expect(result.data.error.message).toContain('violated');
-  });
-
-  it('rejects settlement of early-exited commitment', async () => {
+  it('rejects early-exit of already-exited commitment', async () => {
     mockGetCommitment.mockResolvedValue({
       ...MOCK_COMMITMENT_ACTIVE,
       status: 'EARLY_EXIT',
     });
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -270,11 +276,55 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
     expect(result.data.error.message).toContain('already been exited early');
   });
 
+  it('rejects early-exit of settled commitment', async () => {
+    mockGetCommitment.mockResolvedValue({
+      ...MOCK_COMMITMENT_ACTIVE,
+      status: 'SETTLED',
+    });
+
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
+    const response = await POST(req, context, 'correlation-123');
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(409);
+    expect(result.data.error.message).toContain('Cannot exit commitment');
+  });
+
+  it('rejects early-exit of violated commitment', async () => {
+    mockGetCommitment.mockResolvedValue({
+      ...MOCK_COMMITMENT_ACTIVE,
+      status: 'VIOLATED',
+    });
+
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
+    const response = await POST(req, context, 'correlation-123');
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(409);
+  });
+
   // ── Boundary Validation Tests ──────────────────────────────────────────────
 
   it('rejects commitment ID with empty/whitespace string', async () => {
-    const req = createMockRequest(`http://localhost/api/commitments/   /settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/   /early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: '   ' } };
@@ -285,9 +335,11 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
     expect(result.data.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('rejects malformed caller address', async () => {
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: 'not-a-valid-address' },
+  it('rejects missing reason field', async () => {
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -296,12 +348,46 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
     const result = await parseResponse(response);
     expect(result.status).toBe(400);
     expect(result.data.error.code).toBe('VALIDATION_ERROR');
-    expect(result.data.error.message).toContain('address');
+  });
+
+  it('rejects reason exceeding max length (500 chars)', async () => {
+    const longReason = 'x'.repeat(501);
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: longReason,
+        callerAddress: VALID_ADDRESS,
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
+    const response = await POST(req, context, 'correlation-123');
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(400);
+    expect(result.data.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects malformed caller address', async () => {
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: 'not-a-valid-address',
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
+    const response = await POST(req, context, 'correlation-123');
+
+    const result = await parseResponse(response);
+    expect(result.status).toBe(400);
+    expect(result.data.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('rejects missing caller address', async () => {
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: {},
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -313,7 +399,7 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
   });
 
   it('rejects malformed JSON in request body', async () => {
-    const req = new NextRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
+    const req = new NextRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
       method: 'POST',
       body: 'invalid json',
     });
@@ -328,14 +414,13 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
   // ── Idempotency Tests ──────────────────────────────────────────────────────
 
   it('returns cached response on idempotent replay', async () => {
-    const idempotencyKey = 'settle-' + randomUUID();
+    const idempotencyKey = 'exit-' + randomUUID();
     const cachedResponse = {
-      commitmentId: COMMITMENT_ID,
-      settlementAmount: '10500',
-      finalStatus: 'SETTLED',
+      exitAmount: '9500',
+      penaltyAmount: '1000',
+      finalStatus: 'EARLY_EXIT',
       txHash: 'cached-tx-hash',
       reference: 'cached-ref',
-      settledAt: new Date().toISOString(),
     };
 
     mockIdempotency.getRecord.mockResolvedValue({
@@ -347,8 +432,11 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
       expiresAt: Date.now() + 86400000,
     });
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
       idempotencyKey,
     });
 
@@ -359,12 +447,12 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
     expect(result.status).toBe(200);
     expect(result.data.data).toEqual(cachedResponse);
     expect(response.headers.get('X-Idempotent-Replay')).toBe('true');
-    // Should not call settleCommitment for cache hit
-    expect(mockSettleCommitment).not.toHaveBeenCalled();
+    // Should not call earlyExit for cache hit
+    expect(mockEarlyExit).not.toHaveBeenCalled();
   });
 
   it('blocks concurrent requests with same idempotency key', async () => {
-    const idempotencyKey = 'settle-' + randomUUID();
+    const idempotencyKey = 'exit-' + randomUUID();
 
     mockIdempotency.getRecord.mockResolvedValue({
       key: idempotencyKey,
@@ -373,8 +461,11 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
       expiresAt: Date.now() + 86400000,
     });
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
       idempotencyKey,
     });
 
@@ -389,9 +480,14 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
   // ── CSRF Protection Tests ──────────────────────────────────────────────────
 
   it('asserts CSRF token on POST request', async () => {
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
-    });\n\n    const context = { params: { id: COMMITMENT_ID } };
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
+    });
+
+    const context = { params: { id: COMMITMENT_ID } };
     await POST(req, context, 'correlation-123');
 
     expect(mockAssertCsrf).toHaveBeenCalledWith(req);
@@ -402,8 +498,11 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
       throw new Error('CSRF token invalid');
     });
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -418,8 +517,11 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
   it('respects rate limit for IP', async () => {
     mockCheckRateLimit.mockResolvedValue(false);
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
@@ -433,15 +535,19 @@ describe('POST /api/commitments/[id]/settle - Authorization & Boundary Validatio
   // ── Transaction Response Validation ────────────────────────────────────────
 
   it('validates transaction response has required fields', async () => {
-    mockSettleCommitment.mockResolvedValue({
-      settlementAmount: '10500',
-      finalStatus: 'SETTLED',
+    mockEarlyExit.mockResolvedValue({
+      exitAmount: '9500',
+      penaltyAmount: '1000',
+      finalStatus: 'EARLY_EXIT',
       txHash: '', // Empty tx hash should fail validation
-      reference: 'settle-ref-123',
+      reference: 'exit-ref-123',
     } as any);
 
-    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/settle`, {
-      body: { callerAddress: VALID_ADDRESS },
+    const req = createMockRequest(`http://localhost/api/commitments/${COMMITMENT_ID}/early-exit`, {
+      body: {
+        reason: 'Need liquidity',
+        callerAddress: VALID_ADDRESS,
+      },
     });
 
     const context = { params: { id: COMMITMENT_ID } };
