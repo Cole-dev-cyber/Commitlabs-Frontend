@@ -57,7 +57,6 @@ import { getUserCommitmentsFromChain } from '@/lib/backend/services/contracts';
 import type { ChainCommitmentStatus } from '@/lib/backend/services/contracts';
 import { withApiHandler } from '@/lib/backend/withApiHandler';
 import {
-  MAX_PAGE_SIZE,
   parsePaginationParams,
   parseSortParams,
   paginateArray,
@@ -150,14 +149,9 @@ const CommitmentSearchQuerySchema = z.object({
   /** Minimum compliance score (0–100). */
   minCompliance: z.coerce.number().min(0).max(100).optional(),
 
-  // Pagination params are parsed separately by pagination.ts utilities,
-  // but we accept them in the same query string.
-  page: z.coerce.number().int().min(1).default(1).optional(),
-  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(10).optional(),
-
-  // Sorting params are also parsed separately.
-  sortBy: z.enum(SORTABLE_FIELDS).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
+  // Pagination and sorting params are intentionally validated by
+  // parsePaginationParams/parseSortParams below so every route shares the
+  // same error mapping and bounds (Invariants I3/I4).
 });
 
 // ─── Mapped search result shape ───────────────────────────────────────────────
@@ -193,6 +187,27 @@ interface SearchSnapshot {
   rejectedRecords: number;
   duplicateRecords: number;
   truncated: boolean;
+}
+
+const DEFAULT_SEARCH_INVARIANTS: SearchInvariants = {
+  authorizedOwner: true,
+  stableSort: true,
+  boundedPage: true,
+  duplicateCommitmentsRemoved: true,
+};
+
+interface CommitmentSearchCacheEntry {
+  data: CommitmentSearchItem[];
+  meta: Record<string, unknown>;
+  filters: Record<string, unknown>;
+  snapshot?: SearchSnapshot;
+  invariants?: SearchInvariants;
+  _telemetry?: {
+    returnedCount: number;
+    total: number;
+    filteredCount: number;
+    truncated: boolean;
+  };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -236,20 +251,41 @@ function normalizeAddress(address: string): string {
   return address.trim().toUpperCase();
 }
 
-function parseFiniteNumber(value: unknown, fallback = 0): number {
-  const parsed = typeof value === 'string' ? Number(value.replace(/,/g, '')) : Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+function parseFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return null;
+    const parsed = Number(trimmed.replace(/,/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'bigint') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseOptionalFiniteNumber(value: unknown, fallback = 0): number {
+  return parseFiniteNumber(value) ?? fallback;
 }
 
 function normalizeSearchItem(raw: any): CommitmentSearchItem | null {
   const commitmentId = String(raw.id ?? raw.commitmentId ?? '').trim();
   const ownerAddress = String(raw.ownerAddress ?? '').trim();
   const asset = String(raw.asset ?? '').trim();
+  const status = String(raw.status ?? '').trim().toUpperCase();
   const amount = parseFiniteNumber(raw.amount);
   const complianceScore = parseFiniteNumber(raw.complianceScore);
   const violationCount = parseFiniteNumber(raw.violationCount);
 
   if (
+    amount === null ||
+    complianceScore === null ||
+    violationCount === null ||
+    !COMMITMENT_STATUS_VALUES.includes(status as (typeof COMMITMENT_STATUS_VALUES)[number]) ||
     !commitmentId ||
     !ownerAddress ||
     !asset ||
@@ -267,11 +303,11 @@ function normalizeSearchItem(raw: any): CommitmentSearchItem | null {
     ownerAddress,
     asset,
     amount: String(amount),
-    status: raw.status as ChainCommitmentStatus,
+    status: status as ChainCommitmentStatus,
     riskType: inferRiskType(raw),
     complianceScore,
-    currentValue: String(parseFiniteNumber(raw.currentValue)),
-    feeEarned: String(parseFiniteNumber(raw.feeEarned)),
+    currentValue: String(parseOptionalFiniteNumber(raw.currentValue)),
+    feeEarned: String(parseOptionalFiniteNumber(raw.feeEarned)),
     violationCount,
     createdAt: raw.createdAt ?? new Date(0).toISOString(),
     expiresAt: raw.expiresAt ?? new Date(0).toISOString(),
@@ -443,18 +479,16 @@ export const GET = withApiHandler(
       pageSize: paginationParams.pageSize,
     });
 
-    const cached = await cache.get<{
-      data: CommitmentSearchItem[];
-      meta: Record<string, unknown>;
-      filters: Record<string, unknown>;
-      snapshot?: SearchSnapshot;
-      _telemetry?: {
-        returnedCount: number;
-        total: number;
-        filteredCount: number;
-        truncated: boolean;
-      };
-    }>(cacheKey);
+    let cached: CommitmentSearchCacheEntry | null = null;
+    try {
+      cached = await cache.get<CommitmentSearchCacheEntry>(cacheKey);
+    } catch (err) {
+      logWarn(req, '[api/commitments/search] cache read failed; continuing to chain', {
+        correlationId,
+        ownerAddress: normalizedOwnerAddress,
+        cacheError: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     if (cached !== null) {
       const durationMs = Date.now() - startedAt;
@@ -469,6 +503,7 @@ export const GET = withApiHandler(
       const response = ok(
         {
           ...responseData,
+          invariants: responseData.invariants ?? DEFAULT_SEARCH_INVARIANTS,
           snapshot: {
             ...(cached.snapshot ?? {}),
             source: 'cache' as const,
@@ -517,6 +552,9 @@ export const GET = withApiHandler(
     );
     let items = dedupedItems;
 
+    // Enforce owner scope on mapped items regardless of chain response.
+    items = items.filter((c) => c.ownerAddress.toUpperCase() === normalizedOwnerAddress);
+
     // 7. Apply filters
     if (asset) {
       const normalizedAsset = asset.toUpperCase();
@@ -551,12 +589,7 @@ export const GET = withApiHandler(
     const result = paginateArray(items, paginationParams);
 
     // 10. Build response with applied filter metadata
-    const invariants: SearchInvariants = {
-      authorizedOwner: true,
-      stableSort: true,
-      boundedPage: true,
-      duplicateCommitmentsRemoved: true,
-    };
+    const invariants = DEFAULT_SEARCH_INVARIANTS;
     const snapshot: SearchSnapshot = {
       queryKey: cacheKey,
       generatedAt: new Date().toISOString(),
@@ -592,11 +625,20 @@ export const GET = withApiHandler(
     };
 
     // Invariant I6: only cache successful responses
-    await cache.set(
-      cacheKey,
-      { ...responsePayload, _telemetry: telemetryPayload },
-      CacheTTL.COMMITMENT_SEARCH,
-    );
+    // Cache write failures must not turn a successful chain response into a 5xx.
+    try {
+      await cache.set(
+        cacheKey,
+        { ...responsePayload, _telemetry: telemetryPayload },
+        CacheTTL.COMMITMENT_SEARCH,
+      );
+    } catch (err) {
+      logWarn(req, '[api/commitments/search] cache write failed; continuing without caching', {
+        correlationId,
+        ownerAddress: normalizedOwnerAddress,
+        cacheError: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     logInfo(req, '[api/commitments/search] served from chain', {
       correlationId,
