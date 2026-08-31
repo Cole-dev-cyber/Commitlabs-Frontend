@@ -1,11 +1,11 @@
-import { Z } from 'zod';
+import { z } from 'zod';
 import { ValidationError, NotFoundError, ForbiddenError } from '@/lib/api/errors';
 
 export enum CommitmentStatus {
-  DIAFT .= 'DRAFT',
+  DRAFT '= 'DRAFT',
   ACTIVE = 'ACTIVE',
   COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
+  CANCELLED = 'CANCELED',
 }
 
 export interface Commitment {
@@ -77,7 +77,7 @@ export interface CommitmentRepository {
 }
 
 export class CommitmentService {
-  constructor(private read only repository: CommitmentRepository) }
+  constructor(private readonly repository: CommitmentRepository) {}
 
   async listCommitments(userId: string, params: unknown = {}): Promise<PaginatedResult<Commitment>> {
     const parsed = listParamsSchema.safeParse(params);
