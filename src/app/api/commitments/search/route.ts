@@ -101,7 +101,7 @@ let currentSearchRequests = 0;
  * Allowed `CommitmentStatus` filter values.
  * Maps user-facing values to the on-chain `ChainCommitmentStatus` type.
  */
-const COMMITMENT_STATUS_VALUES = [
+export const COMMITMENT_STATUS_VALUES = [
   'CREATED',
   'ACTIVE',
   'SETTLED',
@@ -110,23 +110,29 @@ const COMMITMENT_STATUS_VALUES = [
 ] as const;
 
 /** Risk type filter – mirrors `CommitmentType` from domain types. */
-const RISK_TYPE_VALUES = ['Safe', 'Balanced', 'Aggressive'] as const;
+export const RISK_TYPE_VALUES = ['Safe', 'Balanced', 'Aggressive'] as const;
 
 /** Fields available for `sortBy`. */
-const SORTABLE_FIELDS = ['createdAt', 'amount', 'complianceScore', 'status', 'asset'] as const;
-type SortableField = (typeof SORTABLE_FIELDS)[number];
+export const SORTABLE_FIELDS = ['createdAt', 'amount', 'complianceScore', 'status', 'asset'] as const;
+export type SortableField = (typeof SORTABLE_FIELDS)[number];
 
 // ─── Zod validation schema ───────────────────────────────────────────────────
 
 const trimmedOptionalString = z
   .string()
+  .max(512, 'Query string is too long')
   .trim()
+  .max(128, 'Query string must be 128 characters or fewer')
   .transform((value) => (value.length > 0 ? value : undefined))
   .optional();
 
-const CommitmentSearchQuerySchema = z.object({
+/**
+ * Public query contract for `GET /api/commitments/search`.
+ * Known invalid parameters return 400; unknown query parameters are ignored.
+ */
+export const CommitmentSearchQuerySchema = z.object({
   /** Owner address – required to scope the search. */
-  ownerAddress: z.string().trim().min(1, 'ownerAddress is required'),
+  ownerAddress: z.string().max(512, 'ownerAddress is too long').trim().min(1, 'ownerAddress is required').max(64, 'ownerAddress is too long'),
 
   /** Filter by asset code (e.g. "XLM", "USDC"). Case-insensitive match. */
   asset: trimmedOptionalString,
@@ -147,12 +153,18 @@ const CommitmentSearchQuerySchema = z.object({
   riskType: z.enum(RISK_TYPE_VALUES).optional(),
 
   /** Minimum compliance score (0–100). */
-  minCompliance: z.coerce.number().min(0).max(100).optional(),
+  minCompliance: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().min(0).max(100).optional(),
+  ),
 
   // Pagination and sorting params are intentionally validated by
   // parsePaginationParams/parseSortParams below so every route shares the
   // same error mapping and bounds (Invariants I3/I4).
 });
+
+/** Public query type for `GET /api/commitments/search`. */
+export type CommitmentSearchQuery = z.infer<typeof CommitmentSearchQuerySchema>;
 
 // ─── Mapped search result shape ───────────────────────────────────────────────
 
@@ -335,6 +347,12 @@ function dedupeByCommitmentId(items: CommitmentSearchItem[]): {
  * Compare two commitment items by the given field and order.
  * Provides a **stable** sort by using `commitmentId` as a tiebreaker.
  */
+function compareStrings(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 function compareItems(
   a: CommitmentSearchItem,
   b: CommitmentSearchItem,
@@ -360,11 +378,11 @@ function compareItems(
       break;
     }
     case 'status': {
-      cmp = a.status.localeCompare(b.status);
+      cmp = compareStrings(a.status, b.status);
       break;
     }
     case 'asset': {
-      cmp = a.asset.localeCompare(b.asset);
+      cmp = compareStrings(a.asset, b.asset);
       break;
     }
     default:
@@ -373,7 +391,7 @@ function compareItems(
 
   // Stable tiebreaker (Invariant: sort results are deterministic)
   if (cmp === 0) {
-    cmp = a.commitmentId.localeCompare(b.commitmentId);
+    cmp = compareStrings(a.commitmentId, b.commitmentId);
   }
 
   return cmp * dir;
