@@ -67,10 +67,10 @@ Response: paginated list of matching commitments.
 `GET /api/commitments/[id]` (not yet implemented in route but supported by service)
 
 ### Update commitment
-`Patch /api/commitments/[id]` (not yet implemented in route but supported by service)
+`PATCH /api/commitments/[id]` (not yet implemented in route but supported by service)
 
 ### Delete commitment
-`DELETe /api/commitments/[id]` (not yet implemented in route but supported by service)
+`DELETE /api/commitments/[id]` (not yet implemented in route but supported by service)
 
 ## Contract
 - `Commitment` object fields: `id`, `userId`, `title`, `amount`, `currency`, `status`, `dueDate?`, `createdAt`, `updatedAt`.
