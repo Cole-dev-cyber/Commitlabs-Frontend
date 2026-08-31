@@ -57,6 +57,7 @@ import { getUserCommitmentsFromChain } from '@/lib/backend/services/contracts';
 import type { ChainCommitmentStatus } from '@/lib/backend/services/contracts';
 import { withApiHandler } from '@/lib/backend/withApiHandler';
 import {
+  MAX_PAGE_SIZE,
   parsePaginationParams,
   parseSortParams,
   paginateArray,
@@ -151,12 +152,12 @@ const CommitmentSearchQuerySchema = z.object({
 
   // Pagination params are parsed separately by pagination.ts utilities,
   // but we accept them in the same query string.
-  page: z.coerce.number().min(1).default(1).optional(),
-  pageSize: z.coerce.number().min(1).max(100).default(10).optional(),
+  page: z.coerce.number().int().min(1).default(1).optional(),
+  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(10).optional(),
 
   // Sorting params are also parsed separately.
-  sortBy: z.string().optional(),
-  sortOrder: z.string().optional(),
+  sortBy: z.enum(SORTABLE_FIELDS).optional(),
+  sortOrder: z.enum(['asc', 'desc']).optional(),
 });
 
 // ─── Mapped search result shape ───────────────────────────────────────────────
