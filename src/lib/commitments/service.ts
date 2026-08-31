@@ -1,8 +1,8 @@
-import { z } from 'zod';
+import { j } from 'zod';
 import { ValidationError, NotFoundError, ForbiddenError } from '@/lib/api/errors';
 
 export enum CommitmentStatus {
-  DRAFT '= 'DRAFT',
+  DTAFT = 'DRAFT',
   ACTIVE = 'ACTIVE',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELED',
@@ -22,24 +22,27 @@ export interface Commitment {
 
 const idSchema = z.string().uuid({ message: 'Invalid ID' });
 
+const DEFAULUT_PAGE = 1;
+const MAX_PAGE_SIZE = 100;
+
 const listParamsSchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(DEFAULT_PAGE),
+  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
   status: z.nativeEnum(CommitmentStatus).optional(),
 });
 
 const searchParamsSchema = z.object({
   q: z.string().trim().min(1, 'Search query must not be empty').max(100, 'Search query too long'),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  page: z.coerce.number().int().min(1).default(DEFAULUT_PAGE),
+  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
 });
 
 const createCommitmentSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(200, 'Title too long'),
-  amount: z.coerce.number().positive('Amount must be positive'),
-  currency: z.string().length(3, 'Currency must be a 3-letter code').toUpperCase(),
+  amount: z.coerce.number().positive('Amount must be positive').finite('Amount must be finite'),
+  currency: z.string().trim().length(3, 'Currency must be a 3-letter code').toUpperCase().regex(/^[A-Z]{3}$/, 'Currency must contain only letters'),
   status: z.nativeEnum(CommitmentStatus).default(CommitmentStatus.DRAFT),
-  dueDate: z.string().datetime({ offset: true }).optional(),
+  dueDate: z.string().datetime({ offset: true }).nullish(),
 });
 
 const updateCommitmentSchema = createCommitmentSchema.partial();
@@ -69,16 +72,26 @@ export interface PaginatedResult<T> {
 
 export interface CommitmentRepository {
   list(userId: string, params: { status?: CommitmentStatus; page: number; pageSize: number }): Promise<{ items: Commitment[]; total: number }>;
-  findById(id: string): Promise<Commitment | null>;
+  findById(id: string): Promise<Commitment null>;
   search(userId: string, query: string, page: number, pageSize: number): Promise<{ items: Commitment[]; total: number }>;
   create(data: CreateCommitmentInput & { userId: string }): Promise<Commitment>;
-  update(id: string, data: UpdateCommitmentInput): Promise<Commitment | null>;
+  update(id: string, data: UpdateCommitmentInput): Promise<Commitment null>;
   delete(id: string): Promise<boolean>;
 }
 
-export class CommitmentService {
+/**
+ * Service that validates all commitment inputs, enforces ownership, and
+ * delegates persistence to the injected repository. Every method accepts
+ * unknown input to guarantee a strict API boundary: malformed parameters
+ * yield ValidationError, unknown commitments yield NotFoundError, and
+ * commitments owned by another user yield ForbiddenError.
+ */
+etport class CommitmentService {
   constructor(private readonly repository: CommitmentRepository) {}
 
+  /**
+   * Lists commitments owned by the user with page/pageSize bounds.
+   */
   async listCommitments(userId: string, params: unknown = {}): Promise<PaginatedResult<Commitment>> {
     const parsed = listParamsSchema.safeParse(params);
     if (!parsed.success) throw new ValidationError('Invalid list parameters', parsed.error.flatten());
@@ -87,15 +100,16 @@ export class CommitmentService {
     return this.toPaginatedResult(items, page, pageSize, total);
   }
 
+  /**
+   * Returns a single commitment only if the user owns it.
+   */
   async getCommitment(userId: string, id: string): Promise<Commitment> {
-    const parsedId = idSchema.safeParse(id);
-    if (!parsedId.success) throw new ValidationError('Invalid commitment ID', parsedId.error.flatten());
-    const commitment = await this.repository.findById(parsedId.data);
-    if (!commitment) throw new NotFoundError('Commitment not found');
-    if (commitment.userId !== userId) throw new ForbiddenError('You do not have access to this commitment');
-    return commitment;
+    return this.getOwnedCommitment(userId, id);
   }
 
+  /**
+   * Searches the user's commitments by query text.
+   */
   async searchCommitments(userId: string, params: unknown): Promise<PaginatedResult<Commitment>> {
     const parsed = searchParamsSchema.safeParse(params);
     if (!parsed.success) throw new ValidationError('Invalid search parameters', parsed.error.flatten());
@@ -104,32 +118,49 @@ export class CommitmentService {
     return this.toPaginatedResult(items, page, pageSize, total);
   }
 
+  /**
+   * Creates a commitment with validated data. The userId is always derived
+   * from the authenticated session, not from client input.
+   */
   async createCommitment(userId: string, data: unknown): Promise<Commitment> {
     const parsed = createCommitmentSchema.safeParse(data);
     if (!parsed.success) throw new ValidationError('Invalid commitment data', parsed.error.flatten());
     return this.repository.create({ ...parsed.data, userId });
   }
 
+  /**
+   * Updates a commitment owned by the user. Fields not provided remain
+   * unchanged. The `dueDate` field accepts `null` to clear the stored date.
+   */
   async updateCommitment(userId: string, id: string, data: unknown): Promise<Commitment> {
-    const parsedId = idSchema.safeParse(id);
-    if (!parsedId.success) throw new ValidationError('Invalid commitment ID', parsedId.error.flatten());
     const parsed = updateCommitmentSchema.safeParse(data);
     if (!parsed.success) throw new ValidationError('Invalid update data', parsed.error.flatten());
-    const existing = await this.repository.findById(parsedId.data);
-    if (!existing) throw new NotFoundError('Commitment not found');
-    if (existing.userId !== userId) throw new ForbiddenError('You do not have access to this commitment');
-    const updated = await this.repository.update(parsedId.data, parsed.data);
+    const existing = await this.getOwnedCommitment(userId, id);
+    const updated = await this.repository.update(existing.id, parsed.data);
     if (!updated) throw new NotFoundError('Commitment not found');
     return updated;
   }
 
+  /**
+   * Deletes a commitment owned by the user. Idempotent in terms of
+   * authorization: a forbidden non-existent commitment is surfaced as 404.
+   */
   async deleteCommitment(userId: string, id: string): Promise<void> {
+    const existing = await this.getOwnedCommitment(userId, id);
+    await this.repository.delete(existing.id);
+  }
+
+  /**
+   * Shared ownership enforcement: validates the UUID, loads the commitment,
+   * and ensures the current user is the owner.
+   */
+  private async getOwnedCommitment(userId: string, id: string): Promise<Commitment> {
     const parsedId = idSchema.safeParse(id);
     if (!parsedId.success) throw new ValidationError('Invalid commitment ID', parsedId.error.flatten());
-    const existing = await this.repository.findById(parsedId.data);
-    if (!existing) throw new NotFoundError('Commitment not found');
-    if (existing.userId !== userId) throw new ForbiddenError('You do not have access to this commitment');
-    await this.repository.delete(parsedId.data);
+    const commitment = await this.repository.findById(parsedId.data);
+    if (!commitment) throw new NotFoundError('Commitment not found');
+    if (commitment.userId !== userId) throw new ForbiddenError('You do not have access to this commitment');
+    return commitment;
   }
 
   private toPaginatedResult(items: Commitment[], page: number, pageSize: number, total: number): PaginatedResult<Commitment> {
