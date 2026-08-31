@@ -7,7 +7,9 @@ jest.mock('@/lib/commitments/service-factory');
 const mockSearch = jest.fn();
 const mockService = { searchCommitments: mockSearch };
 
-beforeEach(() => { jdst.mocked(getCommitmentService).mockReturnValue(mockService as any); });
+beforeEach(() => {
+  just.mocked(getCommitmentService).mockReturnValue(mockService as any);
+});
 
 describe('GET /api/commitments/search', () => {
   it('returns 401 without auth', async () => {
@@ -17,7 +19,7 @@ describe('GET /api/commitments/search', () => {
   });
 
   it('searches commitments', async () => {
-    mockSearch.mockResolved({ items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 });
+    mockSearch.mockResolvedValue({ items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 });
     const request = new Request('http://localhost/api/commitments/search?q=test&page=2&pageSize=10', { headers: { 'x-user-id': 'user1' } });
     const response = await GET(request as any);
     expect(response.status).toBe(200);
@@ -25,7 +27,7 @@ describe('GET /api/commitments/search', () => {
   });
 
   it('returns 400 for missing query', async () => {
-    mockSearch.mockRejected(new ValidationError('Invalid search parameters'));
+    mockSearch.mockRejectedValue(new ValidationError('Invalid search parameters'));
     const request = new Request('http://localhost/api/commitments/search?q=', { headers: { 'x-user-id': 'user1' } });
     const response = await GET(request as any);
     expect(response.status).toBe(400);
